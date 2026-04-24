@@ -12,7 +12,8 @@ import { UsersScreen }        from './screens/UsersScreen';
 import { MigrationsScreen }   from './screens/MigrationsScreen';
 import { TableBrowserScreen } from './screens/TableBrowserScreen';
 import { QueryScreen }        from './screens/QueryScreen';
-import { DownloadPgScreen }   from './screens/DownloadPgScreen';
+import { DownloadPgScreen }        from './screens/DownloadPgScreen';
+import { DatabaseDetailScreen }    from './screens/DatabaseDetailScreen';
 import { detectPostgres }     from './services/pgDetect';
 
 interface AppProps {
@@ -113,6 +114,14 @@ export const App: React.FC<AppProps> = ({ pgCtlBin: initialPgCtl, initdbBin: ini
         );
       case 'download-pg':
         return <DownloadPgScreen nav={nav} onInstalled={handleVersionInstalled} />;
+      case 'database-detail':
+        return (
+          <DatabaseDetailScreen
+            nav={nav}
+            instance={screen.instance}
+            database={screen.database}
+          />
+        );
       default:
         return <Text color="red">{'Unknown screen'}</Text>;
     }

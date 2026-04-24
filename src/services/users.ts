@@ -99,3 +99,21 @@ export async function grantDatabase(
     await client.end();
   }
 }
+
+export async function changeRolePassword(
+  instance: Instance,
+  roleName: string,
+  newPassword: string,
+): Promise<void> {
+  const client = clientFor(instance);
+  await client.connect();
+  try {
+    // Password is fully parameterized — never interpolated into the query string
+    await client.query(
+      `ALTER ROLE ${client.escapeIdentifier(roleName)} WITH ENCRYPTED PASSWORD $1`,
+      [newPassword],
+    );
+  } finally {
+    await client.end();
+  }
+}

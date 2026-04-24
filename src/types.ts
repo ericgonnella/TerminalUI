@@ -73,7 +73,8 @@ export type ScreenName =
   | 'migrations'
   | 'table-browser'
   | 'query'
-  | 'download-pg';
+  | 'download-pg'
+  | 'database-detail';
 
 export interface HomeScreen       { name: 'home' }
 export interface NewInstanceScreen { name: 'new-instance' }
@@ -81,9 +82,10 @@ export interface InstanceScreen   { name: 'instance';      instance: Instance }
 export interface DatabasesScreen  { name: 'databases';     instance: Instance; database?: string }
 export interface UsersScreen      { name: 'users';         instance: Instance }
 export interface MigrationsScreen { name: 'migrations';    instance: Instance; database: string }
-export interface TableBrowserScreen { name: 'table-browser'; instance: Instance; database: string }
-export interface QueryScreen      { name: 'query';         instance: Instance; database: string }
-export interface DownloadPgScreen { name: 'download-pg' }
+export interface TableBrowserScreen  { name: 'table-browser';   instance: Instance; database: string }
+export interface QueryScreen         { name: 'query';           instance: Instance; database: string }
+export interface DownloadPgScreen    { name: 'download-pg' }
+export interface DatabaseDetailScreen { name: 'database-detail'; instance: Instance; database: string }
 
 export type ScreenDef =
   | HomeScreen
@@ -94,4 +96,5 @@ export type ScreenDef =
   | MigrationsScreen
   | TableBrowserScreen
   | QueryScreen
-  | DownloadPgScreen;
+  | DownloadPgScreen
+  | DatabaseDetailScreen;

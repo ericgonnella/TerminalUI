@@ -11,7 +11,8 @@ const LABELS: Record<ScreenDef['name'], string> = {
   'migrations':     'Migrations',
   'table-browser':  'Table Browser',
   'query':          'Query Runner',
-  'download-pg':    'Get PostgreSQL',
+  'download-pg':     'Get PostgreSQL',
+  'database-detail': 'Database Info',
 };
 
 interface BreadcrumbProps {
@@ -24,7 +25,8 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = ({ stack }) => (
       let label = LABELS[s.name] ?? s.name;
       if (s.name === 'instance' || s.name === 'databases' ||
           s.name === 'users'    || s.name === 'migrations' ||
-          s.name === 'table-browser' || s.name === 'query') {
+          s.name === 'table-browser' || s.name === 'query' ||
+          s.name === 'database-detail') {
         label = (s as { instance?: { name: string } }).instance?.name ?? label;
       }
       const isLast = i === stack.length - 1;

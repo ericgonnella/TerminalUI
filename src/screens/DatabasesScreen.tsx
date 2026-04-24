@@ -84,6 +84,9 @@ export const DatabasesScreen: React.FC<DatabasesScreenProps> = ({
     if (key.escape)    nav.pop();
     if (input === 'n' || input === 'N') { setNewName(''); setMode('create-name'); }
     if (input === 'd' || input === 'D') { if (dbs[selected]) setMode('confirm-drop'); }
+    if (input === 'i' || input === 'I') {
+      if (dbs[selected]) nav.push({ name: 'database-detail', instance, database: dbs[selected]!.name });
+    }
     if ((key.return || input === '\r') && dbs[selected]) {
       nav.push({ name: 'table-browser', instance, database: dbs[selected]!.name });
     }
@@ -151,6 +154,7 @@ export const DatabasesScreen: React.FC<DatabasesScreenProps> = ({
       <Keybindings bindings={[
         { key: '↑↓',   label: 'navigate'      },
         { key: 'Enter', label: 'browse tables' },
+        { key: 'I',     label: 'info / edit'   },
         { key: 'N',     label: 'new db'        },
         { key: 'D',     label: 'drop db'       },
         { key: 'Esc',   label: 'back'          },
