@@ -1,0 +1,35 @@
+{
+  "name": "pgmanager",
+  "version": "0.1.0",
+  "description": "Interactive terminal UI for creating and managing local PostgreSQL instances",
+  "bin": {
+    "pgmanager": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "ts-node --transpile-only src/index.tsx",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prepare": "tsc"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.17",
+    "ink": "^3.2.0",
+    "ink-select-input": "^4.0.3",
+    "ink-spinner": "^4.0.3",
+    "ink-text-input": "^4.0.3",
+    "node-fetch": "^2.7.0",
+    "pg": "^8.12.0",
+    "react": "^17.0.2",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/node": "^20.14.0",
+    "@types/node-fetch": "^2.6.13",
+    "@types/pg": "^8.11.6",
+    "@types/react": "^17.0.80",
+    "@types/uuid": "^9.0.8",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}

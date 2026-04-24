@@ -1,0 +1,212 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import * as fs from 'fs';
+import { Box, Text, useInput } from 'ink';
+import Spinner from 'ink-spinner';
+import { Keybindings }         from '../components/Keybindings';
+import { ConfirmDialog }       from '../components/ConfirmDialog';
+import { getInstanceStatusColor } from '../theme';
+import {
+  getInstanceStatus,
+  startInstance,
+  stopInstance,
+} from '../services/pgctl';
+import { listDatabases }       from '../services/database';
+import { useAsync }            from '../hooks/useAsync';
+import type { Navigation }     from '../hooks/useNavigation';
+import type { InstancesState } from '../hooks/useInstances';
+import type { DatabaseInfo, Instance, InstanceStatus } from '../types';
+
+const STATUS_ICON: Record<InstanceStatus, string> = {
+  running: '●',
+  stopped: '○',
+  unknown: '◌',
+  error:   '✗',
+};
+
+interface InstanceScreenProps {
+  nav:        Navigation;
+  instances:  InstancesState;
+  instance:   Instance;
+  pgCtlBin:   string;
+}
+
+export const InstanceScreen: React.FC<InstanceScreenProps> = ({
+  nav, instances, instance, pgCtlBin,
+}) => {
+  const [status,    setStatus]    = useState<InstanceStatus>('unknown');
+  const [selected,  setSelected]  = useState(0);
+  const [busyOp,    setBusyOp]    = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [confirmDataDir, setConfirmDataDir] = useState(false);
+  const [opMsg,     setOpMsg]     = useState<string | null>(null);
+
+  const dbState = useAsync<DatabaseInfo[]>(
+    () => (status === 'running' ? listDatabases(instance) : Promise.resolve([])),
+    [instance.id, status],
+  );
+  const dbs = dbState.data ?? [];
+
+  // Refresh status every 3s
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      const s = await getInstanceStatus(pgCtlBin, instance);
+      if (!cancelled) setStatus(s);
+    };
+    void refresh();
+    const t = setInterval(() => { void refresh(); }, 3000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [pgCtlBin, instance]);
+
+  const doToggle = useCallback(async () => {
+    setBusyOp(true);
+    setOpMsg(null);
+    try {
+      if (status === 'running') {
+        const res = await stopInstance(pgCtlBin, instance, l => setOpMsg(l));
+        setOpMsg(res.ok ? 'Stopped.' : `Error: ${res.output}`);
+      } else {
+        const res = await startInstance(pgCtlBin, instance, l => setOpMsg(l));
+        setOpMsg(res.ok ? 'Started.' : `Error: ${res.output}`);
+      }
+    } finally {
+      setBusyOp(false);
+      const newStatus = await getInstanceStatus(pgCtlBin, instance);
+      setStatus(newStatus);
+    }
+  }, [pgCtlBin, instance, status]);
+
+  const doDelete = useCallback(async () => {
+    setConfirmDel(false);
+    if (status === 'running') {
+      await stopInstance(pgCtlBin, instance);
+    }
+    instances.removeInstance(instance.id);
+    // Ask about the data dir only for user-created instances.
+    if (!instance.winServiceName && fs.existsSync(instance.dataDir)) {
+      setConfirmDataDir(true);
+    } else {
+      nav.pop();
+    }
+  }, [pgCtlBin, instance, status, instances, nav]);
+
+  const doDeleteDataDir = useCallback(() => {
+    setConfirmDataDir(false);
+    try {
+      fs.rmSync(instance.dataDir, { recursive: true, force: true });
+    } catch {
+      /* swallow — instance already removed from manager */
+    }
+    nav.pop();
+  }, [instance.dataDir, nav]);
+
+  useInput((input, key) => {
+    if (confirmDel || confirmDataDir || busyOp) return;
+    if (key.upArrow)   setSelected(s => Math.max(0, s - 1));
+    if (key.downArrow) setSelected(s => Math.min(dbs.length - 1, s + 1));
+    if (key.escape)    nav.pop();
+    if (input === 'n' || input === 'N') {
+      nav.push({ name: 'databases', instance, database: undefined });
+    }
+    if ((key.return || input === '\r') && dbs[selected]) {
+      nav.push({ name: 'databases', instance, database: dbs[selected]!.name });
+    }
+    if (input === 's' || input === 'S') void doToggle();
+    if (input === 'd' || input === 'D') setConfirmDel(true);
+    if (input === 'u' || input === 'U') nav.push({ name: 'users', instance });
+    if (input === 'm' || input === 'M') {
+      if (dbs[selected]) nav.push({ name: 'migrations', instance, database: dbs[selected]!.name });
+    }
+  });
+
+  const statusColor = getInstanceStatusColor(status);
+  const icon        = STATUS_ICON[status];
+
+  return (
+    <Box flexDirection="column">
+      {/* Info panel */}
+      <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
+        <Box flexDirection="row" marginBottom={0}>
+          <Text color="gray" dimColor>{'Port: '}</Text>
+          <Text color="white" bold>{String(instance.port)}</Text>
+          <Text color="gray" dimColor>{'    Superuser: '}</Text>
+          <Text color="white">{instance.superuser}</Text>
+          <Text color="gray" dimColor>{'    Status: '}</Text>
+          {busyOp ? (
+            <><Text color="yellow"><Spinner type="dots" /></Text><Text color="yellow">{'  ...'}</Text></>
+          ) : (
+            <Text color={statusColor} bold>{`${icon} ${status}`}</Text>
+          )}
+        </Box>
+        <Box flexDirection="row">
+          <Text color="gray" dimColor>{'Data: '}</Text>
+          <Text color="gray">{instance.dataDir}</Text>
+        </Box>
+      </Box>
+
+      {!!opMsg && <Box marginBottom={1}><Text color="gray" dimColor>{`  ${opMsg}`}</Text></Box>}
+
+      {/* Databases list */}
+      <Box borderStyle="round" borderColor="blue" flexDirection="column" paddingX={1} marginBottom={1}>
+        <Box>
+          <Text bold color="blue">{'NAME                OWNER           ENCODING   SIZE'}</Text>
+        </Box>
+        <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+        {status !== 'running' && (
+          <Text color="gray" dimColor>{'  Instance is not running.'}</Text>
+        )}
+        {status === 'running' && dbState.loading && (
+          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color="gray">{'  Loading...'}</Text></Box>
+        )}
+        {status === 'running' && dbState.error && (
+          <Text color="red">{`  Error: ${dbState.error}`}</Text>
+        )}
+        {status === 'running' && !dbState.loading && dbs.length === 0 && (
+          <Text color="gray" dimColor>{'  No user databases found.'}</Text>
+        )}
+        {dbs.map((db, i) => {
+          const isSel = i === selected;
+          return (
+            <Box key={db.name} flexDirection="row">
+              <Text color={isSel ? 'cyan' : 'white'} bold={isSel}>
+                {`${isSel ? '▶ ' : '  '}${db.name.padEnd(20)}`}
+              </Text>
+              <Text color="gray">{db.owner.padEnd(16)}</Text>
+              <Text color="gray">{db.encoding.padEnd(11)}</Text>
+              <Text color="gray">{db.sizePretty}</Text>
+            </Box>
+          );
+        })}
+      </Box>
+
+      {confirmDel && (
+        <ConfirmDialog
+          message={`Delete instance "${instance.name}" from manager?`}
+          danger
+          onConfirm={() => void doDelete()}
+          onCancel={() => setConfirmDel(false)}
+        />
+      )}
+
+      {confirmDataDir && (
+        <ConfirmDialog
+          message={`Also delete the data directory "${instance.dataDir}"? This permanently erases all databases.`}
+          danger
+          onConfirm={() => doDeleteDataDir()}
+          onCancel={() => { setConfirmDataDir(false); nav.pop(); }}
+        />
+      )}
+
+      <Keybindings bindings={[
+        { key: '↑↓',   label: 'navigate'   },
+        { key: 'Enter', label: 'open db'    },
+        { key: 'N',     label: 'new db'     },
+        { key: 'S',     label: 'start/stop' },
+        { key: 'U',     label: 'users'      },
+        { key: 'M',     label: 'migrations' },
+        { key: 'D',     label: 'delete'     },
+        { key: 'Esc',   label: 'back'       },
+      ]} />
+    </Box>
+  );
+};
