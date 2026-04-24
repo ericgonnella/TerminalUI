@@ -155,6 +155,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       superuser: 'postgres',
       createdAt: new Date().toISOString(),
       hasPassword: password.length > 0,
+      password:  password || undefined,
     };
 
     appendLog(makeLog('INFO', `Initialising data directory: ${dir}`));
