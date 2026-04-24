@@ -46,9 +46,43 @@ async function main(): Promise<void> {
     }
   }
 
-  render(
+  // --- Alternate screen buffer ---------------------------------------------
+  // Enter the terminal's alternate screen buffer so the TUI owns the whole
+  // viewport and never mixes with scrollback. On exit (or any resize), we
+  // also issue a full-screen clear so Ink's line-based diff can never
+  // under-clear and leave ghost frames when the terminal is resized.
+  const ENTER_ALT = '\x1b[?1049h';
+  const LEAVE_ALT = '\x1b[?1049l';
+  const CLEAR_ALL = '\x1b[2J\x1b[H';
+
+  const isTTY = !!process.stdout.isTTY;
+  if (isTTY) {
+    process.stdout.write(ENTER_ALT + CLEAR_ALL);
+  }
+
+  const restoreScreen = (): void => {
+    if (isTTY) process.stdout.write(LEAVE_ALT);
+  };
+
+  // Always return to the main screen on any exit path.
+  process.on('exit',    restoreScreen);
+  process.on('SIGINT',  () => { restoreScreen(); process.exit(130); });
+  process.on('SIGTERM', () => { restoreScreen(); process.exit(143); });
+
+  // On resize, wipe the whole screen before Ink's next diff frame runs.
+  // This prevents the classic Ink ghost-frame artifact where the previous
+  // frame's wrapped lines leak into scrollback.
+  if (isTTY) {
+    process.stdout.on('resize', () => {
+      process.stdout.write(CLEAR_ALL);
+    });
+  }
+
+  const { waitUntilExit } = render(
     <App pgCtlBin={pg.pgCtl} initdbBin={pg.initdb} />,
   );
+  await waitUntilExit();
+  restoreScreen();
 }
 
 void main();

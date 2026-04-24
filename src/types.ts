@@ -22,10 +22,18 @@ export interface Instance {
   superuser: string;
   createdAt: string;
   lastMigrationsDir?: string;
-  /** Windows only: service name used by net start/stop when pg_ctl is unavailable */
+  /** Hostname or IP. Defaults to 127.0.0.1 when unset. */
+  host?: string;
+  /** Windows only: service name used by net start/stop when pg_ctl is unavailable. */
   winServiceName?: string;
+  /** Linux only: systemd unit name used by systemctl start/stop/status. */
+  systemdService?: string;
   /** True if scram-sha-256 auth was set during initdb (i.e. user chose a password). */
   hasPassword?: boolean;
+  /** Stored password for instances that require password auth (e.g. external instances). */
+  password?: string;
+  /** True if this instance was imported externally rather than initialised by this app. */
+  external?: boolean;
 }
 
 export interface DatabaseInfo {
@@ -67,6 +75,7 @@ export interface MigrationRecord {
 export type ScreenName =
   | 'home'
   | 'new-instance'
+  | 'import-instance'
   | 'instance'
   | 'databases'
   | 'users'
@@ -78,6 +87,7 @@ export type ScreenName =
 
 export interface HomeScreen       { name: 'home' }
 export interface NewInstanceScreen { name: 'new-instance' }
+export interface ImportInstanceScreen { name: 'import-instance' }
 export interface InstanceScreen   { name: 'instance';      instance: Instance }
 export interface DatabasesScreen  { name: 'databases';     instance: Instance; database?: string }
 export interface UsersScreen      { name: 'users';         instance: Instance }
@@ -90,6 +100,7 @@ export interface DatabaseDetailScreen { name: 'database-detail'; instance: Insta
 export type ScreenDef =
   | HomeScreen
   | NewInstanceScreen
+  | ImportInstanceScreen
   | InstanceScreen
   | DatabasesScreen
   | UsersScreen

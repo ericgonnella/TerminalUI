@@ -2,8 +2,9 @@ import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner   from 'ink-spinner';
-import { Keybindings }  from '../components/Keybindings';
-import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Keybindings }      from '../components/Keybindings';
+import { ConfirmDialog }    from '../components/ConfirmDialog';
+import { PeekPasswordInput } from '../components/PeekPasswordInput';
 import {
   getDatabaseDetail,
   renameDatabase,
@@ -20,6 +21,7 @@ type Mode =
   | 'edit-name'
   | 'edit-owner'
   | 'edit-password'
+  | 'edit-password-confirm'
   | 'confirm-rename'
   | 'busy';
 
@@ -36,9 +38,11 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
   const [opError,    setOpError]    = useState<string | null>(null);
 
   // Edit field buffers
-  const [editName,     setEditName]     = useState('');
-  const [editOwner,    setEditOwner]    = useState('');
-  const [editPassword, setEditPassword] = useState('');
+  const [editName,            setEditName]            = useState('');
+  const [editOwner,           setEditOwner]           = useState('');
+  const [editPassword,        setEditPassword]        = useState('');
+  const [editPasswordConfirm, setEditPasswordConfirm] = useState('');
+  const [editPasswordError,   setEditPasswordError]   = useState<string | null>(null);
 
   // Current database name may change after a rename
   const [currentDb, setCurrentDb] = useState(database);
@@ -79,10 +83,45 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
 
   const startEditPassword = useCallback(() => {
     setEditPassword('');
+    setEditPasswordConfirm('');
+    setEditPasswordError(null);
     setOpMsg(null);
     setOpError(null);
     setMode('edit-password');
   }, []);
+
+  const handlePasswordFirstSubmit = useCallback((value: string) => {
+    if (!value.trim()) { setMode('view'); return; }
+    setEditPassword(value);
+    setEditPasswordConfirm('');
+    setEditPasswordError(null);
+    setMode('edit-password-confirm');
+  }, []);
+
+  const handlePasswordConfirmSubmit = useCallback(async (value: string) => {
+    if (value !== editPassword) {
+      setEditPasswordError('Passwords do not match \u2014 please try again.');
+      setEditPassword('');
+      setEditPasswordConfirm('');
+      setMode('edit-password');
+      return;
+    }
+    if (!detail?.owner) { setMode('view'); return; }
+    setMode('busy');
+    setOpMsg(`Changing password for role "${detail.owner}"...`);
+    try {
+      await changeRolePassword(instance, detail.owner, editPassword);
+      setOpMsg(`Password for "${detail.owner}" updated.`);
+      setOpError(null);
+    } catch (e: unknown) {
+      setOpError(e instanceof Error ? e.message : String(e));
+      setOpMsg(null);
+    } finally {
+      setEditPassword('');
+      setEditPasswordConfirm('');
+      setMode('view');
+    }
+  }, [editPassword, instance, detail]);
 
   const doRename = useCallback(async () => {
     const newName = editName.trim();
@@ -120,25 +159,6 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
       setMode('view');
     }
   }, [instance, currentDb, reload]);
-
-  const doChangePassword = useCallback(async (value: string) => {
-    const pw = value.trim();
-    if (!pw) { setMode('view'); return; }
-    if (!detail?.owner) { setMode('view'); return; }
-    setMode('busy');
-    setOpMsg(`Changing password for role "${detail.owner}"...`);
-    try {
-      await changeRolePassword(instance, detail.owner, pw);
-      setOpMsg(`Password for "${detail.owner}" updated.`);
-      setOpError(null);
-    } catch (e: unknown) {
-      setOpError(e instanceof Error ? e.message : String(e));
-      setOpMsg(null);
-    } finally {
-      setEditPassword('');
-      setMode('view');
-    }
-  }, [instance, detail, reload]);
 
   // ── Keybindings ─────────────────────────────────────────────────────────────
 
@@ -270,20 +290,41 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
       )}
 
       {/* ── Edit: Change password ─────────────────────────────────────────── */}
-      {mode === 'edit-password' && (
+      {(mode === 'edit-password' || mode === 'edit-password-confirm') && (
         <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="yellow" bold>{`Change password for owner "${detail?.owner ?? '?'}"`}</Text>
           <Text color="gray" dimColor>{'Press Enter to confirm, Esc to cancel.'}</Text>
           <Box flexDirection="row" marginTop={1}>
-            <Text color="white">{'New password: '}</Text>
-            <TextInput
-              value={editPassword}
-              onChange={setEditPassword}
-              onSubmit={doChangePassword}
-              placeholder="(leave blank to cancel)"
-              mask="*"
-            />
+            <Text color={mode === 'edit-password' ? 'white' : 'gray'}>
+              {'New password:     '}
+            </Text>
+            {mode === 'edit-password' ? (
+              <PeekPasswordInput
+                value={editPassword}
+                onChange={setEditPassword}
+                onSubmit={handlePasswordFirstSubmit}
+                placeholder="(leave blank to cancel)"
+              />
+            ) : (
+              <Text color="green">{'*'.repeat(Math.min(editPassword.length, 12))}</Text>
+            )}
           </Box>
+          {mode === 'edit-password' && !!editPasswordError && (
+            <Text color="red">{'  ✗ '}{editPasswordError}</Text>
+          )}
+          {mode === 'edit-password-confirm' && (
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Text color="white" bold>{'Confirm password: '}</Text>
+                <PeekPasswordInput
+                  value={editPasswordConfirm}
+                  onChange={setEditPasswordConfirm}
+                  onSubmit={handlePasswordConfirmSubmit}
+                  placeholder="re-enter your password"
+                />
+              </Box>
+            </Box>
+          )}
         </Box>
       )}
 
@@ -317,7 +358,7 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
           { key: 'Esc',   label: 'back'          },
         ]} />
       )}
-      {(mode === 'edit-name' || mode === 'edit-owner' || mode === 'edit-password') && (
+      {(mode === 'edit-name' || mode === 'edit-owner' || mode === 'edit-password' || mode === 'edit-password-confirm') && (
         <Keybindings bindings={[
           { key: 'Enter', label: 'confirm' },
           { key: 'Esc',   label: 'cancel'  },

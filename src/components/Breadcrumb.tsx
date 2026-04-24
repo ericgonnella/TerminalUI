@@ -5,6 +5,7 @@ import type { ScreenDef } from '../types';
 const LABELS: Record<ScreenDef['name'], string> = {
   'home':           'Home',
   'new-instance':   'New Instance',
+  'import-instance': 'Import Instance',
   'instance':       'Instance',
   'databases':      'Databases',
   'users':          'Users',

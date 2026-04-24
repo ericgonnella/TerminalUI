@@ -6,6 +6,7 @@ import { useNavigation }  from './hooks/useNavigation';
 import { useInstances }   from './hooks/useInstances';
 import { HomeScreen }         from './screens/HomeScreen';
 import { NewInstanceScreen }  from './screens/NewInstanceScreen';
+import { ImportInstanceScreen } from './screens/ImportInstanceScreen';
 import { InstanceScreen }     from './screens/InstanceScreen';
 import { DatabasesScreen }    from './screens/DatabasesScreen';
 import { UsersScreen }        from './screens/UsersScreen';
@@ -69,6 +70,13 @@ export const App: React.FC<AppProps> = ({ pgCtlBin: initialPgCtl, initdbBin: ini
             initdbBin={initdbBin}
           />
         );
+      case 'import-instance':
+        return (
+          <ImportInstanceScreen
+            nav={nav}
+            instances={instances}
+          />
+        );
       case 'instance':
         return (
           <InstanceScreen
@@ -129,7 +137,7 @@ export const App: React.FC<AppProps> = ({ pgCtlBin: initialPgCtl, initdbBin: ini
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header title="PGMANAGER" subtitle="Local PostgreSQL Manager" />
+      <Header title="PGMANAGER" subtitle="PostgreSQL Manager" />
       <Box marginBottom={1}>
         <Breadcrumb stack={nav.stack} />
       </Box>

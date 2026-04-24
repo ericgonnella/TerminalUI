@@ -19,15 +19,71 @@ async function windowsServiceAction(
   return { ok: code === 0, output: lines.join('\n') };
 }
 
-/** TCP probe: returns true if something is accepting connections on the port. */
-function isTcpPortOpen(port: number): Promise<boolean> {
+/** Start/stop a Linux systemd unit. Requires the user to have sudo/polkit rights. */
+async function systemdServiceAction(
+  serviceName: string,
+  action:      'start' | 'stop',
+  onLine?:     (line: string) => void,
+): Promise<PgCtlResult> {
+  const lines: string[] = [];
+  const collector = (l: string) => { lines.push(l); onLine?.(l); };
+  // Use array args — never shell interpolation — to avoid injection.
+  const code = await spawnLines('systemctl', [action, serviceName], collector);
+  if (code !== 0) {
+    const hint = 'systemctl requires sudo/polkit. Try: sudo systemctl ' + action + ' ' + serviceName;
+    lines.push(hint);
+    onLine?.(hint);
+  }
+  return { ok: code === 0, output: lines.join('\n') };
+}
+
+/** Query systemd unit state: returns 'running' if active, 'stopped' if inactive/failed, 'unknown' otherwise. */
+async function systemdServiceStatus(serviceName: string): Promise<InstanceStatus> {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = (s: InstanceStatus) => { if (!settled) { settled = true; resolve(s); } };
+    try {
+      const proc = spawn('systemctl', ['is-active', serviceName], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+      proc.on('error', () => done('error'));
+      proc.on('exit', () => {
+        const t = out.trim();
+        if (t === 'active')    return done('running');
+        if (t === 'inactive' || t === 'failed') return done('stopped');
+        done('unknown');
+      });
+    } catch { done('error'); }
+  });
+}
+
+/** TCP probe: returns true if something is accepting connections on host:port. */
+function isTcpPortOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
   return new Promise(resolve => {
     const sock  = new net.Socket();
-    const timer = setTimeout(() => { sock.destroy(); resolve(false); }, 1000);
+    const timer = setTimeout(() => { sock.destroy(); resolve(false); }, 2000);
     sock.once('connect', () => { clearTimeout(timer); sock.destroy(); resolve(true); });
     sock.once('error',   () => { clearTimeout(timer); resolve(false); });
-    sock.connect(port, '127.0.0.1');
+    sock.connect(port, host);
   });
+}
+
+/**
+ * Read the last `maxLines` non-empty lines of a file. Returns '' if the file
+ * does not exist, is empty, or cannot be read. Used to surface postgres's
+ * own startup log when `pg_ctl start` fails with the uninformative
+ * "Examine the log output" message.
+ */
+export function readLogTail(filePath: string, maxLines: number = 40): string {
+  try {
+    if (!fs.existsSync(filePath)) return '';
+    const text  = fs.readFileSync(filePath, { encoding: 'utf8' });
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    if (lines.length === 0) return '';
+    return lines.slice(-maxLines).join('\n');
+  } catch {
+    return '';
+  }
 }
 
 export interface PgCtlResult {
@@ -223,21 +279,58 @@ export async function startInstance(
     return windowsServiceAction(instance.winServiceName, 'start', onLine);
   }
 
+  // Linux systemd-managed instance.
+  if (process.platform !== 'win32' && instance.systemdService) {
+    return systemdServiceAction(instance.systemdService, 'start', onLine);
+  }
+
+  // Remote instance (host is set and not loopback) with no managed service
+  // registered — we cannot drive pg_ctl against a machine we don't run on.
+  const host = instance.host ?? '127.0.0.1';
+  const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
+  if (isRemote) {
+    const msg = `Remote instance at ${host}:${instance.port} — start/stop is managed externally. Configure a systemd service name to control it.`;
+    onLine?.(msg);
+    return { ok: false, output: msg };
+  }
+
   if (pgCtlBin) {
     const logDir  = path.join(instance.dataDir, 'pg_log');
     const logFile = path.join(logDir, 'startup.log');
     try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* ignore if can't create */ }
     const binDir    = path.dirname(pgCtlBin);
     const extraPath = windowsDllDirs(pgCtlBin);
-    return pgCtlRun(
+    const result = await pgCtlRun(
       pgCtlBin,
       ['start', '-D', instance.dataDir, '-o', `-p ${instance.port}`, '-l', logFile, '-w', '-t', '30'],
       onLine,
       { cwd: binDir, extraPath },
     );
+
+    // On failure, pg_ctl's own stdout is terse ("could not start server —
+    // examine the log output"). Read the tail of the log file that pg_ctl
+    // writes to (`-l logFile`) and surface it to the user.
+    if (!result.ok) {
+      const tail = readLogTail(logFile, 40);
+      if (tail) {
+        const header = `\n── postgres log (${logFile}) ──`;
+        onLine?.(header);
+        tail.split('\n').forEach(l => onLine?.(l));
+        return {
+          ok: false,
+          output: `${result.output}${header}\n${tail}\n── end of log ──`,
+        };
+      } else {
+        const msg = `No log file found at ${logFile}. Check that the data directory exists and is writable.`;
+        onLine?.(msg);
+        return { ok: false, output: `${result.output}\n${msg}` };
+      }
+    }
+
+    return result;
   }
 
-  return { ok: false, output: 'pg_ctl not found and no Windows service configured for this instance.' };
+  return { ok: false, output: 'pg_ctl not found and no managed service configured for this instance.' };
 }
 
 export async function stopInstance(
@@ -248,6 +341,20 @@ export async function stopInstance(
   // System-managed Windows service: always use `net stop`.
   if (process.platform === 'win32' && instance.winServiceName) {
     return windowsServiceAction(instance.winServiceName, 'stop', onLine);
+  }
+
+  // Linux systemd-managed instance.
+  if (process.platform !== 'win32' && instance.systemdService) {
+    return systemdServiceAction(instance.systemdService, 'stop', onLine);
+  }
+
+  // Remote instance with no managed service — refuse to drive pg_ctl at it.
+  const host = instance.host ?? '127.0.0.1';
+  const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
+  if (isRemote) {
+    const msg = `Remote instance at ${host}:${instance.port} — start/stop is managed externally. Configure a systemd service name to control it.`;
+    onLine?.(msg);
+    return { ok: false, output: msg };
   }
 
   if (pgCtlBin) {
@@ -261,25 +368,46 @@ export async function stopInstance(
     );
   }
 
-  return { ok: false, output: 'pg_ctl not found and no Windows service configured for this instance.' };
+  return { ok: false, output: 'pg_ctl not found and no managed service configured for this instance.' };
 }
 
 export async function getInstanceStatus(
   pgCtlBin: string,
   instance: Instance,
 ): Promise<InstanceStatus> {
+  const host = instance.host ?? '127.0.0.1';
+
   // For system-managed Windows service instances, prefer a TCP probe on
   // the configured port — `pg_ctl status` against Program Files data dirs
   // is unreliable without admin rights.
   if (process.platform === 'win32' && instance.winServiceName) {
     try {
-      return (await isTcpPortOpen(instance.port)) ? 'running' : 'stopped';
+      return (await isTcpPortOpen(instance.port, host)) ? 'running' : 'stopped';
     } catch {
       return 'error';
     }
   }
 
-  // Prefer pg_ctl status for user-created instances
+  // systemd-managed instance: ask systemd directly.
+  if (process.platform !== 'win32' && instance.systemdService) {
+    try {
+      return await systemdServiceStatus(instance.systemdService);
+    } catch {
+      return 'error';
+    }
+  }
+
+  // Remote instance (not local): rely on TCP probe only.
+  const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
+  if (isRemote) {
+    try {
+      return (await isTcpPortOpen(instance.port, host)) ? 'running' : 'stopped';
+    } catch {
+      return 'error';
+    }
+  }
+
+  // Prefer pg_ctl status for user-created local instances
   if (pgCtlBin) {
     try {
       const binDir    = path.dirname(pgCtlBin);
@@ -288,7 +416,7 @@ export async function getInstanceStatus(
       if (result.output.includes('server is running')) return 'running';
       if (result.output.includes('no server running'))  return 'stopped';
       // Fall back to TCP probe if pg_ctl status is ambiguous
-      return (await isTcpPortOpen(instance.port)) ? 'running' : 'unknown';
+      return (await isTcpPortOpen(instance.port, host)) ? 'running' : 'unknown';
     } catch {
       return 'error';
     }
@@ -296,14 +424,20 @@ export async function getInstanceStatus(
 
   // No pg_ctl: TCP port probe
   try {
-    return (await isTcpPortOpen(instance.port)) ? 'running' : 'stopped';
+    return (await isTcpPortOpen(instance.port, host)) ? 'running' : 'stopped';
   } catch {
     return 'error';
   }
 }
 
-/** Find the next free TCP port starting at `start` */
-export async function findFreePort(start: number = 5432): Promise<number> {
+/** Find the next free TCP port starting at `start`, skipping any ports
+ *  already registered to another pgmanager instance. */
+export async function findFreePort(
+  start:    number   = 5432,
+  reserved: number[] = [],
+): Promise<number> {
+  const reservedSet = new Set(reserved);
+
   const isPortFree = (port: number): Promise<boolean> =>
     new Promise(resolve => {
       const srv = net.createServer();
@@ -314,8 +448,9 @@ export async function findFreePort(start: number = 5432): Promise<number> {
 
   let port = start;
   while (port < 65535) {
-    if (await isPortFree(port)) return port;
+    if (!reservedSet.has(port) && await isPortFree(port)) return port;
     port++;
   }
   return start; // fallback
 }
+

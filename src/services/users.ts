@@ -3,9 +3,10 @@ import type { Instance, UserInfo } from '../types';
 
 function clientFor(instance: Instance): Client {
   return new Client({
-    host:     '127.0.0.1',
+    host:     instance.host ?? '127.0.0.1',
     port:     instance.port,
     user:     instance.superuser,
+    password: instance.password,
     database: 'postgres',
     connectionTimeoutMillis: 5000,
   });

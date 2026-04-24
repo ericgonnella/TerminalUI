@@ -5,14 +5,15 @@ import Spinner   from 'ink-spinner';
 import { v4 as uuidv4 } from 'uuid';
 import * as os   from 'os';
 import * as path from 'path';
-import { ActivityLog }    from '../components/ActivityLog';
-import { Keybindings }    from '../components/Keybindings';
+import { ActivityLog }      from '../components/ActivityLog';
+import { Keybindings }      from '../components/Keybindings';
+import { PeekPasswordInput } from '../components/PeekPasswordInput';
 import { initDb, startInstance, findFreePort } from '../services/pgctl';
 import type { Navigation }     from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
 import type { Instance, LogEntry } from '../types';
 
-type Step = 'name' | 'port' | 'password' | 'datadir' | 'running' | 'done' | 'error';
+type Step = 'name' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
 type Phase = 'idle' | 'initdb' | 'starting' | 'verifying' | 'complete';
 
 const PHASES: { id: Phase; label: string }[] = [
@@ -42,11 +43,14 @@ interface NewInstanceScreenProps {
 export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   nav, instances, pgCtlBin, initdbBin,
 }) => {
-  const [step,    setStep]    = useState<Step>('name');
-  const [name,    setName]    = useState('');
-  const [port,    setPort]    = useState('');
-  const [password, setPassword] = useState('');
-  const [dataDir, setDataDir] = useState('');
+  const [step,            setStep]           = useState<Step>('name');
+  const [name,            setName]           = useState('');
+  const [port,            setPort]           = useState('');
+  const [portError,       setPortError]      = useState<string | null>(null);
+  const [password,        setPassword]       = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [passwordError,   setPasswordError]  = useState<string | null>(null);
+  const [dataDir,         setDataDir]        = useState('');
   const [logs,    setLogs]    = useState<LogEntry[]>([]);
   const [error,   setError]   = useState<string | null>(null);
   const [phase,   setPhase]   = useState<Phase>('idle');
@@ -57,10 +61,13 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   }, []);
 
   const resolveDefaults = useCallback(async (instanceName: string) => {
-    const freePort = await findFreePort(5432);
+    // Skip ports already registered with pgmanager, so two instances never
+    // claim the same port — even when one of them is currently stopped.
+    const reserved = instances.instances.map(i => i.port);
+    const freePort = await findFreePort(5432, reserved);
     const defaultDir = path.join(os.homedir(), '.pgmanager', 'data', instanceName);
     return { freePort: String(freePort), defaultDir };
-  }, []);
+  }, [instances.instances]);
 
   const handleNameSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim() || 'default';
@@ -72,15 +79,65 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   }, [resolveDefaults]);
 
   const handlePortSubmit = useCallback((value: string) => {
-    const p = parseInt(value.trim(), 10);
-    setPort(isNaN(p) ? port : String(p));
+    const raw = value.trim();
+    const p   = parseInt(raw, 10);
+
+    // Reject non-numeric or out-of-range ports. 1024+ avoids privileged
+    // ports that require root/admin on most systems.
+    if (isNaN(p) || p < 1 || p > 65535) {
+      setPortError('Port must be a number between 1 and 65535.');
+      return;
+    }
+    if (p < 1024) {
+      setPortError('Ports below 1024 require admin/root privileges. Pick 1024 or higher.');
+      return;
+    }
+
+    // Reject collisions with any already-registered instance on the same host,
+    // regardless of whether that instance is currently running. A stopped
+    // instance still owns its port — starting a second instance on it would
+    // fail or clash as soon as either one was brought up.
+    const host = '127.0.0.1';
+    const conflict = instances.instances.find(i => {
+      const iHost = i.host ?? '127.0.0.1';
+      return i.port === p && iHost === host;
+    });
+    if (conflict) {
+      setPortError(
+        `Port ${p} is already assigned to instance "${conflict.name}". ` +
+        `Delete that instance first, or choose a different port.`,
+      );
+      return;
+    }
+
+    setPortError(null);
+    setPort(String(p));
     setStep('password');
-  }, [port]);
+  }, [instances.instances]);
 
   const handlePasswordSubmit = useCallback((value: string) => {
-    setPassword(value); // may be '' for trust auth
-    setStep('datadir');
+    setPassword(value);
+    setPasswordConfirm('');
+    setPasswordError(null);
+    // Skip confirmation for trust auth (empty password)
+    if (value.length === 0) {
+      setStep('datadir');
+    } else {
+      setStep('password-confirm');
+    }
   }, []);
+
+  const handlePasswordConfirmSubmit = useCallback((confirm: string) => {
+    if (confirm === password) {
+      setPasswordError(null);
+      setStep('datadir');
+    } else {
+      setPasswordError('Passwords do not match — please try again.');
+      setPassword('');
+      setPasswordConfirm('');
+      setStep('password');
+    }
+  }, [password]);
 
   const handleDataDirSubmit = useCallback(async (value: string) => {
     const dir = value.trim() || dataDir;
@@ -179,8 +236,9 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
             {'Step '}
             {step === 'name' ? '1' :
              step === 'port' ? '2' :
-             step === 'password' ? '3' : '4'}
+             (step === 'password' || step === 'password-confirm') ? '3' : '4'}
             {' of 4'}
+            {step === 'password-confirm' ? '  (confirm password)' : ''}
           </Text>
 
           {/* Step 1 — Name */}
@@ -201,42 +259,65 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
           </Box>
 
           {/* Step 2 — Port */}
-          {(step === 'port' || step === 'password' || step === 'datadir' || step === 'running' || step === 'error') && (
-            <Box flexDirection="row">
-              <Text color={step === 'port' ? 'white' : 'gray'} bold={step === 'port'}>
-                {'Port:           '}
-              </Text>
-              {step === 'port' ? (
-                <TextInput
-                  value={port}
-                  onChange={setPort}
-                  onSubmit={handlePortSubmit}
-                  placeholder="5432"
-                />
-              ) : (
-                <Text color="green">{port}</Text>
+          {(step === 'port' || step === 'password' || step === 'password-confirm' || step === 'datadir' || step === 'running' || step === 'error') && (
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Text color={step === 'port' ? 'white' : 'gray'} bold={step === 'port'}>
+                  {'Port:           '}
+                </Text>
+                {step === 'port' ? (
+                  <TextInput
+                    value={port}
+                    onChange={v => { setPort(v); if (portError) setPortError(null); }}
+                    onSubmit={handlePortSubmit}
+                    placeholder="5432"
+                  />
+                ) : (
+                  <Text color="green">{port}</Text>
+                )}
+              </Box>
+              {!!portError && step === 'port' && (
+                <Text color="red">{'  ✗ '}{portError}</Text>
               )}
             </Box>
           )}
 
           {/* Step 3 — Password */}
-          {(step === 'password' || step === 'datadir' || step === 'running' || step === 'error') && (
-            <Box flexDirection="row">
-              <Text color={step === 'password' ? 'white' : 'gray'} bold={step === 'password'}>
-                {'Password:       '}
-              </Text>
-              {step === 'password' ? (
-                <TextInput
-                  value={password}
-                  onChange={setPassword}
-                  onSubmit={handlePasswordSubmit}
-                  placeholder="(leave blank for no password)"
-                  mask="*"
-                />
-              ) : (
-                <Text color={password ? 'green' : 'gray'} dimColor={!password}>
-                  {password ? '*'.repeat(Math.min(password.length, 12)) : '(no password — trust auth)'}
+          {(step === 'password' || step === 'password-confirm' || step === 'datadir' || step === 'running' || step === 'error') && (
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Text color={step === 'password' ? 'white' : 'gray'} bold={step === 'password'}>
+                  {'Password:         '}
                 </Text>
+                {step === 'password' ? (
+                  <PeekPasswordInput
+                    value={password}
+                    onChange={setPassword}
+                    onSubmit={handlePasswordSubmit}
+                    placeholder="(leave blank for no password)"
+                  />
+                ) : (
+                  <Text color={password ? 'green' : 'gray'} dimColor={!password}>
+                    {password ? '*'.repeat(Math.min(password.length, 12)) : '(no password — trust auth)'}
+                  </Text>
+                )}
+              </Box>
+              {!!passwordError && step === 'password' && (
+                <Text color="red">{'  ✗ '}{passwordError}</Text>
+              )}
+              {/* Confirm sub-step — visible only while confirming */}
+              {step === 'password-confirm' && (
+                <Box flexDirection="column">
+                  <Box flexDirection="row">
+                    <Text color="white" bold>{'Confirm password: '}</Text>
+                    <PeekPasswordInput
+                      value={passwordConfirm}
+                      onChange={setPasswordConfirm}
+                      onSubmit={handlePasswordConfirmSubmit}
+                      placeholder="re-enter your password"
+                    />
+                  </Box>
+                </Box>
               )}
             </Box>
           )}
@@ -336,7 +417,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
             <Text color="gray">{'Connection URL:'}</Text>
             <Text color="cyan">{
               createdInstance.hasPassword
-                ? `  postgresql://${createdInstance.superuser}:<password>@127.0.0.1:${createdInstance.port}/postgres`
+                ? `  postgresql://${createdInstance.superuser}:${password}@127.0.0.1:${createdInstance.port}/postgres`
                 : `  postgresql://${createdInstance.superuser}@127.0.0.1:${createdInstance.port}/postgres`
             }</Text>
             <Text color="gray">{'psql:'}</Text>

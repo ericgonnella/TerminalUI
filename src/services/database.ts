@@ -3,11 +3,11 @@ import type { Instance, DatabaseInfo } from '../types';
 
 function clientFor(instance: Instance, database = 'postgres'): Client {
   return new Client({
-    host:     '127.0.0.1',
+    host:     instance.host ?? '127.0.0.1',
     port:     instance.port,
     user:     instance.superuser,
+    password: instance.password,
     database,
-    // Trust auth — no password needed for local connections
     connectionTimeoutMillis: 5000,
   });
 }
@@ -69,7 +69,11 @@ export async function dropDatabase(instance: Instance, name: string): Promise<vo
 }
 
 export function getConnectionString(instance: Instance, database: string): string {
-  return `postgresql://${instance.superuser}@127.0.0.1:${instance.port}/${database}`;
+  const host = instance.host ?? '127.0.0.1';
+  const auth = instance.password
+    ? `${instance.superuser}:${encodeURIComponent(instance.password)}`
+    : instance.superuser;
+  return `postgresql://${auth}@${host}:${instance.port}/${database}`;
 }
 
 // ─── Extended detail ─────────────────────────────────────────────────────────

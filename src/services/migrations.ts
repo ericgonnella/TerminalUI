@@ -7,9 +7,10 @@ const MIGRATIONS_TABLE = 'pgmanager_migrations';
 
 function clientFor(instance: Instance, database: string): Client {
   return new Client({
-    host:     '127.0.0.1',
+    host:     instance.host ?? '127.0.0.1',
     port:     instance.port,
     user:     instance.superuser,
+    password: instance.password,
     database,
     connectionTimeoutMillis: 5000,
   });

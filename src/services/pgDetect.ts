@@ -151,6 +151,35 @@ async function findBinary(names: string[]): Promise<string | null> {
     }
   }
 
+  // 3. Linux: scan Debian/Ubuntu versioned layout /usr/lib/postgresql/<ver>/bin
+  if (process.platform === 'linux') {
+    const root = '/usr/lib/postgresql';
+    try {
+      const entries = fs.readdirSync(root)
+        .map(n => ({ n, ver: parseFloat(n) || 0 }))
+        .filter(e => e.ver > 0)
+        .sort((a, b) => b.ver - a.ver);
+      for (const { n } of entries) {
+        for (const name of names) {
+          const candidate = path.join(root, n, 'bin', name);
+          if (fs.existsSync(candidate)) return candidate;
+        }
+      }
+    } catch { /* /usr/lib/postgresql not present */ }
+
+    // 4. Linux: ask pg_config for its bindir (works for source/custom installs)
+    try {
+      const { stdout } = await execFileAsync('pg_config', ['--bindir']);
+      const bindir = stdout.trim();
+      if (bindir) {
+        for (const name of names) {
+          const candidate = path.join(bindir, name);
+          if (fs.existsSync(candidate)) return candidate;
+        }
+      }
+    } catch { /* pg_config not installed */ }
+  }
+
   return null;
 }
 

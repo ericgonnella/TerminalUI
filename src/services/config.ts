@@ -22,7 +22,7 @@ export function loadConfig(): Config {
     return { instances: [] };
   }
   try {
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
+    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8').replace(/^\uFEFF/, '');
     return JSON.parse(raw) as Config;
   } catch {
     return { instances: [] };

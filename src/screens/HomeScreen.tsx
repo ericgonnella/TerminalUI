@@ -6,9 +6,16 @@ import { Keybindings }        from '../components/Keybindings';
 import { ConfirmDialog }      from '../components/ConfirmDialog';
 import { getInstanceStatusColor } from '../theme';
 import { getInstanceStatus, startInstance, stopInstance } from '../services/pgctl';
+import { useTerminalSize }    from '../hooks/useTerminalSize';
 import type { Navigation }    from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
 import type { Instance, InstanceStatus } from '../types';
+
+/** Truncate a path so it fits within maxLen, showing '…' prefix when shortened. */
+function truncatePath(path: string, maxLen: number): string {
+  if (path.length <= maxLen) return path;
+  return '\u2026' + path.slice(path.length - (maxLen - 1));
+}
 
 const STATUS_ICON: Record<InstanceStatus, string> = {
   running: '●',
@@ -24,12 +31,15 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin }) => {
+  const { columns }                        = useTerminalSize();
   const [selected,      setSelected]      = useState(0);
   const [statuses,      setStatuses]      = useState<Record<string, InstanceStatus>>({});
   const [busyId,        setBusyId]        = useState<string | null>(null);
   const [confirmId,     setConfirmId]     = useState<string | null>(null);
   const [confirmDataDir,setConfirmDataDir]= useState<Instance | null>(null);
   const [opLog,         setOpLog]         = useState<string | null>(null);
+  const [opError,       setOpError]       = useState<string | null>(null);
+  const [showInfo,      setShowInfo]      = useState(false);
 
   const list = instances.instances;
 
@@ -53,13 +63,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
     const status = statuses[instance.id];
     setBusyId(instance.id);
     setOpLog(null);
+    setOpError(null);
     try {
       if (status === 'running') {
         const res = await stopInstance(pgCtlBin, instance, l => setOpLog(l));
-        setOpLog(res.ok ? 'Stopped.' : `Error: ${res.output}`);
+        if (res.ok) { setOpLog('Stopped.'); }
+        else        { setOpLog(null); setOpError(res.output || 'pg_ctl stop failed with no output.'); }
       } else {
         const res = await startInstance(pgCtlBin, instance, l => setOpLog(l));
-        setOpLog(res.ok ? 'Started.' : `Error: ${res.output}`);
+        if (res.ok) { setOpLog('Started.'); }
+        else        { setOpLog(null); setOpError(res.output || 'pg_ctl start failed with no output.'); }
       }
     } finally {
       setBusyId(null);
@@ -101,11 +114,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
     if (confirmDataDir) return; // delegate to data-dir ConfirmDialog
     if (busyId)    return;
 
-    if (key.upArrow)    setSelected(s => Math.max(0, s - 1));
-    if (key.downArrow)  setSelected(s => Math.min(list.length - 1, s + 1));
+    // Close info panel with Escape or I before any other action
+    if (key.escape && showInfo) { setShowInfo(false); return; }
 
+    // Escape also dismisses a visible error log before any other action.
+    if (key.escape && opError) { setOpError(null); return; }
+
+    if (key.upArrow)    { setSelected(s => Math.max(0, s - 1)); setShowInfo(false); }
+    if (key.downArrow)  { setSelected(s => Math.min(list.length - 1, s + 1)); setShowInfo(false); }
+
+    if (input === 'i' || input === 'I') {
+      setShowInfo(s => !s);
+    }
     if (input === 'n' || input === 'N') {
       nav.push({ name: 'new-instance' });
+    }
+    if (input === 'a' || input === 'A') {
+      nav.push({ name: 'import-instance' });
     }
     if (input === 'g' || input === 'G') {
       nav.push({ name: 'download-pg' });
@@ -134,7 +159,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
         <Text color="gray" dimColor>{'─'.repeat(72)}</Text>
 
         {list.length === 0 && (
-          <Text color="gray" dimColor>{'  No instances yet. Press [N] to create one.'}</Text>
+          <Text color="gray" dimColor>{'  No instances yet. Press [N] to create, [A] to add a remote, or [G] to download PostgreSQL.'}</Text>
         )}
 
         {list.map((inst, i) => {
@@ -143,6 +168,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
           const icon   = STATUS_ICON[status];
           const isBusy = busyId === inst.id;
           const isSel  = i === selected;
+          const host   = inst.host ?? '127.0.0.1';
+          const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
+          const rawLocation = isRemote ? `${host}:${inst.port}` : (inst.dataDir || `localhost:${inst.port}`);
+          // NAME(18) + PORT(7) + STATUS(11) + [R](4 opt) + border/padding(4) = ~44 fixed chars
+          const locationMax = Math.max(10, columns - 44 - (isRemote ? 4 : 0));
+          const location = truncatePath(rawLocation, locationMax);
 
           return (
             <Box key={inst.id} flexDirection="row">
@@ -158,7 +189,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
               ) : (
                 <Text color={color}>{`${icon} ${status.padEnd(9)}`}</Text>
               )}
-              <Text color="gray" dimColor>{inst.dataDir}</Text>
+              {isRemote && <Text color="magenta" bold>{'[R] '}</Text>}
+              <Text color="gray" dimColor>{location}</Text>
             </Box>
           );
         })}
@@ -167,6 +199,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
       {opLog && (
         <Box marginBottom={1}>
           <Text color="gray" dimColor>{`  ${opLog}`}</Text>
+        </Box>
+      )}
+
+      {opError && (
+        <Box
+          borderStyle="round"
+          borderColor="red"
+          flexDirection="column"
+          paddingX={1}
+          marginBottom={1}
+        >
+          <Text color="red" bold>{'✗ Operation failed — see log below'}</Text>
+          {opError.split('\n').filter(Boolean).slice(-60).map((line, i) => (
+            <Text
+              key={i}
+              color={/error|fatal|could not|denied|refused/i.test(line) ? 'red' : 'gray'}
+              dimColor={!/error|fatal|could not|denied|refused/i.test(line)}
+            >
+              {line}
+            </Text>
+          ))}
+          <Text color="gray" dimColor>{'  (Press Esc to dismiss)'}</Text>
         </Box>
       )}
 
@@ -188,10 +242,92 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
         />
       )}
 
+      {/* Instance info panel — toggled by [I] */}
+      {showInfo && selected_instance && (() => {
+        const inst    = selected_instance;
+        const host    = inst.host ?? '127.0.0.1';
+        const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
+        const connUrl = inst.hasPassword
+          ? `  postgresql://${inst.superuser}:<your-password>@${host}:${inst.port}/postgres`
+          : `  postgresql://${inst.superuser}@${host}:${inst.port}/postgres`;
+        const psqlCmd = inst.hasPassword
+          ? `  psql -h ${host} -p ${inst.port} -U ${inst.superuser} -W -d postgres`
+          : `  psql -h ${host} -p ${inst.port} -U ${inst.superuser} -d postgres`;
+        return (
+          <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
+            <Text color="cyan" bold>{'Instance Info'}</Text>
+            <Text color="gray">{'─'.repeat(56)}</Text>
+            <Box flexDirection="row">
+              <Text color="gray">{'Instance:  '}</Text>
+              <Text color="cyan" bold>{inst.name}</Text>
+              {isRemote && <Text color="magenta" bold>{'   [REMOTE]'}</Text>}
+              {inst.external && !isRemote && <Text color="blue" bold>{'   [EXTERNAL]'}</Text>}
+            </Box>
+            <Box flexDirection="row">
+              <Text color="gray">{'Host/Port: '}</Text>
+              <Text color="white">{`${host}:${inst.port}`}</Text>
+            </Box>
+            <Box flexDirection="row">
+              <Text color="gray">{'User:      '}</Text>
+              <Text color="white">{inst.superuser}</Text>
+              <Text color="gray">{'   Password: '}</Text>
+              <Text color={inst.hasPassword ? 'yellow' : 'gray'} dimColor={!inst.hasPassword}>
+                {inst.hasPassword ? '(set \u2014 use the password you created)' : '(trust auth \u2014 none required)'}
+              </Text>
+            </Box>
+            {inst.dataDir && (
+              <Box flexDirection="row">
+                <Text color="gray">{'Data dir:  '}</Text>
+                <Text color="white">{inst.dataDir}</Text>
+              </Box>
+            )}
+            {inst.systemdService && (
+              <Box flexDirection="row">
+                <Text color="gray">{'Systemd:   '}</Text>
+                <Text color="white">{inst.systemdService}</Text>
+              </Box>
+            )}
+            {inst.winServiceName && (
+              <Box flexDirection="row">
+                <Text color="gray">{'Service:   '}</Text>
+                <Text color="white">{inst.winServiceName}</Text>
+              </Box>
+            )}
+            {inst.password && (
+              <Box borderStyle="single" borderColor="yellow" flexDirection="column" paddingX={1} marginTop={1}>
+                <Text color="yellow" bold>{'\u26a0  Password stored in plaintext'}</Text>
+                <Text color="gray">{'Config: ~/.pgmanager/config.json'}</Text>
+                {process.platform === 'win32' ? (
+                  <Text color="gray">{'Windows: right-click the file \u2192 Properties \u2192 Security, restrict to your user only.'}</Text>
+                ) : (
+                  <Text color="gray">{'Harden: chmod 600 ~/.pgmanager/config.json'}</Text>
+                )}
+                {isRemote && (
+                  <Text color="gray">{'VPS tip: prefer a restricted role (not superuser) and consider an SSH tunnel.'}</Text>
+                )}
+              </Box>
+            )}
+            <Text color="gray">{'─'.repeat(56)}</Text>
+            <Text color="gray">{'Connection URL:'}</Text>
+            <Text color="cyan">{connUrl}</Text>
+            <Text color="gray">{'psql:'}</Text>
+            <Text color="cyan">{psqlCmd}</Text>
+            {isRemote && !inst.systemdService && (
+              <Box marginTop={1} flexDirection="column">
+                <Text color="gray" dimColor>{'Remote instance: start/stop is managed externally.'}</Text>
+                <Text color="gray" dimColor>{'To control it via pgmanager, set a systemd unit name when importing.'}</Text>
+              </Box>
+            )}
+          </Box>
+        );
+      })()}
+
       <Keybindings bindings={[
-        { key: '↑↓', label: 'navigate' },
+        { key: '\u2191\u2193', label: 'navigate' },
         { key: 'Enter', label: 'open' },
+        { key: 'I', label: 'instance info' },
         { key: 'N', label: 'new instance' },
+        { key: 'A', label: 'add remote' },
         { key: 'S', label: 'start/stop' },
         { key: 'D', label: 'delete' },
         { key: 'G', label: 'get PostgreSQL' },

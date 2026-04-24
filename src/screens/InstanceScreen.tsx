@@ -39,6 +39,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
   const [confirmDel, setConfirmDel] = useState(false);
   const [confirmDataDir, setConfirmDataDir] = useState(false);
   const [opMsg,     setOpMsg]     = useState<string | null>(null);
+  const [opError,   setOpError]   = useState<string | null>(null);
 
   const dbState = useAsync<DatabaseInfo[]>(
     () => (status === 'running' ? listDatabases(instance) : Promise.resolve([])),
@@ -61,13 +62,24 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
   const doToggle = useCallback(async () => {
     setBusyOp(true);
     setOpMsg(null);
+    setOpError(null);
     try {
       if (status === 'running') {
         const res = await stopInstance(pgCtlBin, instance, l => setOpMsg(l));
-        setOpMsg(res.ok ? 'Stopped.' : `Error: ${res.output}`);
+        if (res.ok) {
+          setOpMsg('Stopped.');
+        } else {
+          setOpMsg(null);
+          setOpError(res.output || 'pg_ctl stop failed with no output.');
+        }
       } else {
         const res = await startInstance(pgCtlBin, instance, l => setOpMsg(l));
-        setOpMsg(res.ok ? 'Started.' : `Error: ${res.output}`);
+        if (res.ok) {
+          setOpMsg('Started.');
+        } else {
+          setOpMsg(null);
+          setOpError(res.output || 'pg_ctl start failed with no output.');
+        }
       }
     } finally {
       setBusyOp(false);
@@ -102,6 +114,8 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
 
   useInput((input, key) => {
     if (confirmDel || confirmDataDir || busyOp) return;
+    // Allow Escape to dismiss a visible error panel before popping the screen.
+    if (key.escape && opError) { setOpError(null); return; }
     if (key.upArrow)   setSelected(s => Math.max(0, s - 1));
     if (key.downArrow) setSelected(s => Math.min(dbs.length - 1, s + 1));
     if (key.escape)    nav.pop();
@@ -145,6 +159,28 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
       </Box>
 
       {!!opMsg && <Box marginBottom={1}><Text color="gray" dimColor>{`  ${opMsg}`}</Text></Box>}
+
+      {!!opError && (
+        <Box
+          borderStyle="round"
+          borderColor="red"
+          flexDirection="column"
+          paddingX={1}
+          marginBottom={1}
+        >
+          <Text color="red" bold>{'✗ Operation failed — see log below'}</Text>
+          {opError.split('\n').filter(Boolean).slice(-60).map((line, i) => (
+            <Text
+              key={i}
+              color={/error|fatal|could not|denied|refused/i.test(line) ? 'red' : 'gray'}
+              dimColor={!/error|fatal|could not|denied|refused/i.test(line)}
+            >
+              {line}
+            </Text>
+          ))}
+          <Text color="gray" dimColor>{'  (Press Esc to dismiss)'}</Text>
+        </Box>
+      )}
 
       {/* Databases list */}
       <Box borderStyle="round" borderColor="blue" flexDirection="column" paddingX={1} marginBottom={1}>
