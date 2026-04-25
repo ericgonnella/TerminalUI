@@ -200,6 +200,9 @@ async function installViaApt(
     '-y', '-q',
     '-o', 'Dpkg::Options::=--force-confdef',
     '-o', 'Dpkg::Options::=--force-confold',
+    // Fail after 60 s rather than waiting forever if another process holds the
+    // dpkg lock (e.g. unattended-upgrades running at boot on Ubuntu VPS).
+    '-o', 'DPkg::Lock::Timeout=60',
   ];
 
   onProgress({ phase: 'downloading', downloaded: 0, total: 0,
@@ -226,11 +229,15 @@ async function installViaApt(
       message: 'Adding PostgreSQL PGDG apt repository…' });
 
     // Ensure prerequisites are available.
+    onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+      message: 'Installing prerequisites (curl, gnupg, lsb-release)…' });
     await run('apt-get', ['install', ...APT_NONINTERACTIVE, 'curl', 'ca-certificates', 'gnupg', 'lsb-release'], 120_000, forwardLine);
 
     // Import the PGDG GPG signing key. `gpg --batch --yes` makes overwrite
     // non-interactive — without it, gpg blocks forever asking the user to
     // confirm overwriting an existing keyring file.
+    onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+      message: 'Downloading PostgreSQL signing key from postgresql.org…' });
     const keyDest = '/etc/apt/trusted.gpg.d/postgresql.gpg';
     const keyCmd =
       `set -e; ` +
@@ -238,7 +245,7 @@ async function installViaApt(
       `| gpg --batch --yes --dearmor -o ${keyDest} ` +
       `|| (curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc ` +
       `   | sudo -n gpg --batch --yes --dearmor -o ${keyDest})`;
-    const keyR = await spawnCollect('bash', ['-c', keyCmd], 60_000);
+    const keyR = await spawnCollect('bash', ['-c', keyCmd], 60_000, forwardLine);
     if (keyR.code !== 0) {
       return { ok: false, message: `Failed to import PGDG apt key:\n${keyR.out.slice(0, 400)}` };
     }
@@ -248,6 +255,8 @@ async function installViaApt(
     const codename = lsb.code === 0 ? lsb.out.trim() : 'bookworm';
 
     // Write the PGDG sources.list entry.
+    onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+      message: `Writing PGDG repository list for ${codename}…` });
     const repoLine = `deb https://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main`;
     const repoFile = '/etc/apt/sources.list.d/pgdg.list';
     try {
