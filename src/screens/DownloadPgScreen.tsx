@@ -28,6 +28,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
   const [downloaded, setDownloaded] = useState(0);
   const [total,      setTotal]      = useState(0);
   const poppedRef = useRef(false);
+  const isLinux = process.platform === 'linux';
 
   // Check which majors are already installed
   const [installedMajors, setInstalledMajors] = useState<Set<number>>(new Set());
@@ -142,7 +143,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       {/* Header */}
       <Box borderStyle="round" borderColor="cyan" paddingX={2} marginBottom={1}>
         <Text bold color="cyan">{'Manage PostgreSQL Versions'}</Text>
-        <Text color="gray" dimColor>{'  — portable installs in ~/.pgmanager/pg-versions/'}</Text>
+        <Text color="gray" dimColor>{isLinux ? '  — installs via apt-get (PGDG)' : '  — portable installs in ~/.pgmanager/pg-versions/'}</Text>
       </Box>
 
       {/* Version list (shown during select phase) */}
@@ -173,9 +174,18 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       {/* Confirm download */}
       {phase === 'confirm-download' && (
         <Box borderStyle="round" borderColor="yellow" paddingX={2} marginBottom={1} flexDirection="column">
-          <Text color="yellow" bold>{`Download PostgreSQL ${selectedRelease.patch}?`}</Text>
-          <Text color="gray" dimColor>{'~50–80 MB portable ZIP will be saved to ~/.pgmanager/pg-versions/'}</Text>
-          <Text color="gray" dimColor>{'All required DLLs / libraries included — no system install needed.'}</Text>
+          <Text color="yellow" bold>{`${isLinux ? 'Install' : 'Download'} PostgreSQL ${selectedRelease.patch}?`}</Text>
+          {isLinux ? (
+            <>
+              <Text color="gray" dimColor>{'Installs via apt-get. Requires internet access and may prompt for sudo.'}</Text>
+              <Text color="gray" dimColor>{`Binaries will be placed at /usr/lib/postgresql/${selectedRelease.major}/bin/`}</Text>
+            </>
+          ) : (
+            <>
+              <Text color="gray" dimColor>{'~50–80 MB portable ZIP will be saved to ~/.pgmanager/pg-versions/'}</Text>
+              <Text color="gray" dimColor>{'All required DLLs / libraries included — no system install needed.'}</Text>
+            </>
+          )}
           <Box marginTop={1}>
             <Text color="white">{'  Press '}</Text>
             <Text color="green" bold>{'Y / Enter'}</Text>
@@ -190,7 +200,11 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       {phase === 'confirm-remove' && (
         <Box borderStyle="round" borderColor="red" paddingX={2} marginBottom={1} flexDirection="column">
           <Text color="red" bold>{`Remove PostgreSQL ${selectedRelease.patch}?`}</Text>
-          <Text color="gray" dimColor>{'This will delete ~/.pgmanager/pg-versions/' + selectedRelease.major + '/  (the binaries only, not your data).'}</Text>
+          {isLinux ? (
+            <Text color="gray" dimColor>{`Run: sudo apt remove postgresql-${selectedRelease.major}`}</Text>
+          ) : (
+            <Text color="gray" dimColor>{'This will delete ~/.pgmanager/pg-versions/' + selectedRelease.major + '/  (the binaries only, not your data).'}</Text>
+          )}
           <Box marginTop={1}>
             <Text color="white">{'  Press '}</Text>
             <Text color="red" bold>{'Y / Enter'}</Text>
@@ -206,7 +220,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
         <Box borderStyle="round" borderColor="cyan" paddingX={2} marginBottom={1} flexDirection="column">
           <Box flexDirection="row">
             <Text color="cyan"><Spinner type="dots" /></Text>
-            <Text color="cyan" bold>{`  Downloading PostgreSQL ${selectedRelease.patch}`}</Text>
+            <Text color="cyan" bold>{`  ${isLinux ? 'Installing' : 'Downloading'} PostgreSQL ${selectedRelease.patch}`}</Text>
           </Box>
           <Box marginTop={1}>
             <Text color="white">{progressBar(downloaded, total)}</Text>
@@ -230,7 +244,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       {/* Error */}
       {phase === 'error' && (
         <Box borderStyle="round" borderColor="red" paddingX={2} marginBottom={1} flexDirection="column">
-          <Text color="red" bold>{'✗ Download failed'}</Text>
+          <Text color="red" bold>{'✗ Installation failed'}</Text>
           {message.split('\n').filter(Boolean).map((line, i) => (
             <Text key={i} color="red" dimColor>{line}</Text>
           ))}
