@@ -7,11 +7,13 @@ import { Client } from 'pg';
 import { ActivityLog }       from '../components/ActivityLog';
 import { Keybindings }       from '../components/Keybindings';
 import { PeekPasswordInput } from '../components/PeekPasswordInput';
+import { validatePassword, validatePort, validateHost } from '../services/security';
 import type { Navigation }     from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
-import type { Instance, LogEntry } from '../types';
+import type { Instance, InstallationType, LogEntry } from '../types';
 
 type Step =
+  | 'placement'
   | 'name'
   | 'host'
   | 'port'
@@ -39,16 +41,20 @@ interface ImportInstanceScreenProps {
 }
 
 export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav, instances }) => {
-  const [step,     setStep]     = useState<Step>('name');
-  const [name,     setName]     = useState('');
-  const [host,     setHost]     = useState('127.0.0.1');
-  const [port,     setPort]     = useState('5432');
-  const [user,     setUser]     = useState('postgres');
-  const [password, setPassword] = useState('');
-  const [systemd,  setSystemd]  = useState('');
-  const [logs,     setLogs]     = useState<LogEntry[]>([]);
-  const [error,    setError]    = useState<string | null>(null);
-  const [created,  setCreated]  = useState<Instance | null>(null);
+  const [step,          setStep]          = useState<Step>('placement');
+  const [placement,     setPlacement]     = useState<InstallationType>('local');
+  const [name,          setName]          = useState('');
+  const [host,          setHost]          = useState('127.0.0.1');
+  const [hostError,     setHostError]     = useState<string | null>(null);
+  const [port,          setPort]          = useState('5432');
+  const [portError,     setPortError]     = useState<string | null>(null);
+  const [user,          setUser]          = useState('postgres');
+  const [password,      setPassword]      = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [systemd,       setSystemd]       = useState('');
+  const [logs,          setLogs]          = useState<LogEntry[]>([]);
+  const [error,         setError]         = useState<string | null>(null);
+  const [created,       setCreated]       = useState<Instance | null>(null);
 
   const isLinux = process.platform === 'linux';
 
@@ -59,7 +65,7 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
   const verifyAndSave = useCallback(async (systemdValue: string) => {
     setStep('verifying');
     setLogs([]);
-    const portNum = parseInt(port, 10);
+    const portNum   = parseInt(port, 10);
     const hostValue = host.trim() || '127.0.0.1';
 
     appendLog(makeLog('INFO', `Connecting to ${hostValue}:${portNum} as ${user}...`));
@@ -91,23 +97,25 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
 
     const isLocal = hostValue === '127.0.0.1' || hostValue === 'localhost' || hostValue === '::1';
     const instance: Instance = {
-      id:          uuidv4(),
-      name:        name.trim() || `${hostValue}:${portNum}`,
-      host:        hostValue,
-      port:        portNum,
-      dataDir:     '',
-      superuser:   user,
-      password:    password || undefined,
-      hasPassword: password.length > 0,
-      systemdService: systemdValue.trim() || undefined,
-      external:    true,
-      createdAt:   new Date().toISOString(),
+      id:               uuidv4(),
+      name:             name.trim() || `${hostValue}:${portNum}`,
+      host:             hostValue,
+      port:             portNum,
+      dataDir:          '',
+      superuser:        user,
+      password:           password || undefined,
+      hasPassword:        password.length > 0,
+      systemdService:     systemdValue.trim() || undefined,
+      external:           true,
+      createdAt:          new Date().toISOString(),
+      installationType:   placement,
+      passwordChangedAt:  password.length > 0 ? new Date().toISOString() : undefined,
     };
     instances.addInstance(instance);
-    appendLog(makeLog('INFO', `Instance "${instance.name}" imported (${isLocal ? 'local' : 'remote'}).`));
+    appendLog(makeLog('INFO', `Instance "${instance.name}" imported (${isLocal ? 'local' : 'remote'}, ${placement}).`));
     setCreated(instance);
     setStep('done');
-  }, [host, port, user, password, name, instances, appendLog]);
+  }, [host, port, user, password, name, instances, appendLog, placement]);
 
   const handleNameSubmit = useCallback((v: string) => {
     setName(v.trim());
@@ -115,13 +123,24 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
   }, []);
 
   const handleHostSubmit = useCallback((v: string) => {
-    setHost(v.trim() || '127.0.0.1');
+    const check = validateHost(v);
+    if (!check.ok) {
+      setHostError(check.reason);
+      return;
+    }
+    setHostError(null);
+    setHost(check.value);
     setStep('port');
   }, []);
 
   const handlePortSubmit = useCallback((v: string) => {
-    const p = parseInt(v.trim(), 10);
-    setPort(isNaN(p) ? '5432' : String(p));
+    const check = validatePort(v);
+    if (!check.ok) {
+      setPortError(check.reason);
+      return;
+    }
+    setPortError(null);
+    setPort(String(check.value));
     setStep('user');
   }, []);
 
@@ -131,13 +150,19 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
   }, []);
 
   const handlePasswordSubmit = useCallback((v: string) => {
+    const check = validatePassword(v, placement);
+    if (!check.ok) {
+      setPasswordError(check.reason);
+      return;
+    }
+    setPasswordError(null);
     setPassword(v);
     if (isLinux) {
       setStep('systemd');
     } else {
       void verifyAndSave('');
     }
-  }, [isLinux, verifyAndSave]);
+  }, [isLinux, verifyAndSave, placement]);
 
   const handleSystemdSubmit = useCallback((v: string) => {
     setSystemd(v);
@@ -150,6 +175,17 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
                    key.upArrow || key.downArrow || key.leftArrow || key.rightArrow ||
                    key.tab || key.backspace || key.delete;
     if (!hasKey) return;
+
+    if (step === 'placement') {
+      if (input === 'l' || input === 'L') { setPlacement('local');  setStep('name'); return; }
+      if (input === 'h' || input === 'H') { setPlacement('hosted'); setStep('name'); return; }
+      if (key.escape) {
+        if (poppedRef.current) return;
+        poppedRef.current = true;
+        nav.pop();
+      }
+      return;
+    }
 
     if (step === 'done' || step === 'error') {
       if (poppedRef.current) return;
@@ -176,10 +212,33 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
 
   return (
     <Box flexDirection="column">
-      {step !== 'done' && (
+      {step === 'placement' && (
+        <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
+          <Text bold color="cyan">{'Where is the instance you are importing?'}</Text>
+          <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+          <Box flexDirection="column" marginTop={1}>
+            <Box><Text color="green" bold>{'[L] '}</Text><Text color="white" bold>{'Local / personal machine'}</Text></Box>
+            <Text color="gray" dimColor>{'     Loopback connection. Password recommended, stored in your vault.'}</Text>
+          </Box>
+          <Box flexDirection="column" marginTop={1}>
+            <Box><Text color="yellow" bold>{'[H] '}</Text><Text color="white" bold>{'Hosted / shared server'}</Text></Box>
+            <Text color="gray" dimColor>{'     Network-reachable. Strong password REQUIRED. Prefer SSH tunnels.'}</Text>
+          </Box>
+          <Keybindings bindings={[
+            { key: 'L',   label: 'local' },
+            { key: 'H',   label: 'hosted' },
+            { key: 'Esc', label: 'cancel' },
+          ]} />
+        </Box>
+      )}
+
+      {step !== 'done' && step !== 'placement' && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan" dimColor>
-            {`Import Instance \u2014 Step ${currentStepNum} of ${totalSteps}`}
+            {`Import Instance \u2014 Step ${currentStepNum} of ${totalSteps}   \u2014   `}
+            <Text color={placement === 'hosted' ? 'yellow' : 'green'} bold>
+              {placement === 'hosted' ? 'HOSTED mode' : 'LOCAL mode'}
+            </Text>
           </Text>
 
           {/* Name */}
@@ -196,28 +255,38 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
 
           {/* Host */}
           {(step !== 'name') && (
-            <Box flexDirection="row">
-              <Text color={step === 'host' ? 'white' : 'gray'} bold={step === 'host'}>
-                {'Host:               '}
-              </Text>
-              {step === 'host' ? (
-                <TextInput value={host} onChange={setHost} onSubmit={handleHostSubmit} placeholder="127.0.0.1" />
-              ) : (
-                <Text color="green">{host}</Text>
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Text color={step === 'host' ? 'white' : 'gray'} bold={step === 'host'}>
+                  {'Host:               '}
+                </Text>
+                {step === 'host' ? (
+                  <TextInput value={host} onChange={v => { setHost(v); if (hostError) setHostError(null); }} onSubmit={handleHostSubmit} placeholder="127.0.0.1" />
+                ) : (
+                  <Text color="green">{host}</Text>
+                )}
+              </Box>
+              {!!hostError && step === 'host' && (
+                <Text color="red">{'  ✗ '}{hostError}</Text>
               )}
             </Box>
           )}
 
           {/* Port */}
           {(step === 'port' || step === 'user' || step === 'password' || step === 'systemd' || step === 'verifying' || step === 'error') && (
-            <Box flexDirection="row">
-              <Text color={step === 'port' ? 'white' : 'gray'} bold={step === 'port'}>
-                {'Port:               '}
-              </Text>
-              {step === 'port' ? (
-                <TextInput value={port} onChange={setPort} onSubmit={handlePortSubmit} placeholder="5432" />
-              ) : (
-                <Text color="green">{port}</Text>
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Text color={step === 'port' ? 'white' : 'gray'} bold={step === 'port'}>
+                  {'Port:               '}
+                </Text>
+                {step === 'port' ? (
+                  <TextInput value={port} onChange={v => { setPort(v); if (portError) setPortError(null); }} onSubmit={handlePortSubmit} placeholder="5432" />
+                ) : (
+                  <Text color="green">{port}</Text>
+                )}
+              </Box>
+              {!!portError && step === 'port' && (
+                <Text color="red">{'  ✗ '}{portError}</Text>
               )}
             </Box>
           )}
@@ -238,16 +307,21 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
 
           {/* Password */}
           {(step === 'password' || step === 'systemd' || step === 'verifying' || step === 'error') && (
-            <Box flexDirection="row">
-              <Text color={step === 'password' ? 'white' : 'gray'} bold={step === 'password'}>
-                {'Password:           '}
-              </Text>
-              {step === 'password' ? (
-                <PeekPasswordInput value={password} onChange={setPassword} onSubmit={handlePasswordSubmit} placeholder="(leave blank for trust auth)" />
-              ) : (
-                <Text color={password ? 'green' : 'gray'} dimColor={!password}>
-                  {password ? '\u2022'.repeat(Math.min(password.length, 8)) : '(none)'}
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Text color={step === 'password' ? 'white' : 'gray'} bold={step === 'password'}>
+                  {'Password:           '}
                 </Text>
+                {step === 'password' ? (
+                  <PeekPasswordInput value={password} onChange={v => { setPassword(v); if (passwordError) setPasswordError(null); }} onSubmit={handlePasswordSubmit} placeholder={placement === 'hosted' ? '(required, 12+ chars)' : '(leave blank for trust auth)'} />
+                ) : (
+                  <Text color={password ? 'green' : 'gray'} dimColor={!password}>
+                    {password ? '\u2022'.repeat(Math.min(password.length, 8)) : '(none)'}
+                  </Text>
+                )}
+              </Box>
+              {!!passwordError && step === 'password' && (
+                <Text color="red">{'  ✗ '}{passwordError}</Text>
               )}
             </Box>
           )}
@@ -298,12 +372,10 @@ export const ImportInstanceScreen: React.FC<ImportInstanceScreenProps> = ({ nav,
           <Text color="gray">{`  ${created.host}:${created.port} as ${created.superuser}`}</Text>
           {created.hasPassword && (
             <Box flexDirection="column" marginTop={1}>
-              <Text color="yellow" bold>{'\u26a0  Password stored in plaintext'}</Text>
-              <Text color="gray">{'  Config file: ~/.pgmanager/config.json'}</Text>
-              {process.platform === 'win32' ? (
-                <Text color="gray">{'  Windows: ensure %USERPROFILE%\\.pgmanager\\config.json is ACL-restricted to your user.'}</Text>
-              ) : (
-                <Text color="gray">{'  Run: chmod 600 ~/.pgmanager/config.json'}</Text>
+              <Text color="green" bold>{'\u2713  Password stored securely in credential vault'}</Text>
+              <Text color="gray" dimColor>{'  Encrypted at ~/.pgmanager/vault.enc (mode 0600, AES-256-GCM).'}</Text>
+              {placement === 'hosted' && (
+                <Text color="yellow">{'  \u26a0  Hosted mode \u2014 ensure firewall/pg_hba.conf restrict access, and prefer SSH tunnels for admin.'}</Text>
               )}
             </Box>
           )}

@@ -3,6 +3,7 @@ import * as net     from 'net';
 import * as fs      from 'fs';
 import * as os      from 'os';
 import * as path    from 'path';
+import { randomBytes } from 'crypto';
 import type { Instance, InstanceStatus } from '../types';
 
 // ─── Windows service helpers ──────────────────────────────────────────────────
@@ -241,9 +242,15 @@ export async function initDb(
   let pwFile: string | null = null;
 
   if (password && password.length > 0) {
-    pwFile = path.join(os.tmpdir(), `pgmanager-pwd-${Date.now()}-${process.pid}.txt`);
+    // Use cryptographically random filename to prevent temp-dir symlink races.
+    const token = randomBytes(16).toString('hex');
+    pwFile = path.join(os.tmpdir(), `pgmanager-pwd-${token}.txt`);
     try {
       fs.writeFileSync(pwFile, password, { mode: 0o600 });
+      // Belt-and-braces: chmod after write in case creation mode was widened
+      // by umask on some platforms (Node honors `mode` on most POSIX systems
+      // but not universally).
+      try { fs.chmodSync(pwFile, 0o600); } catch { /* Windows or EPERM */ }
     } catch (err: any) {
       const msg = `Cannot write password file: ${err.message}`;
       onLine?.(msg);

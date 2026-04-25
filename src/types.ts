@@ -14,6 +14,12 @@ export interface LogEntry {
 
 export type InstanceStatus = 'running' | 'stopped' | 'unknown' | 'error';
 
+/** Where this instance lives. Controls security posture:
+ *  - 'local':  personal machine, bound to loopback, keychain-stored credentials.
+ *  - 'hosted': server / shared host, stricter password policy, audit log always on,
+ *              warns about network exposure. */
+export type InstallationType = 'local' | 'hosted';
+
 export interface Instance {
   id: string;
   name: string;
@@ -30,10 +36,23 @@ export interface Instance {
   systemdService?: string;
   /** True if scram-sha-256 auth was set during initdb (i.e. user chose a password). */
   hasPassword?: boolean;
-  /** Stored password for instances that require password auth (e.g. external instances). */
+  /**
+   * Runtime-only plaintext password. Hydrated from the credential vault on
+   * load; NEVER serialized to disk. `config.ts` strips this field before
+   * writing. Components must not log or display this value.
+   */
   password?: string;
   /** True if this instance was imported externally rather than initialised by this app. */
   external?: boolean;
+  /** Installation security posture. Defaults to 'local' for legacy instances. */
+  installationType?: InstallationType;
+  /**
+   * ISO-8601 timestamp of the last credential rotation (vault write).
+   * Used by the security probe to warn when >90 days have elapsed.
+   * Set by NewInstanceScreen / ImportInstanceScreen on creation, and by
+   * UsersScreen when changeRolePassword is called.
+   */
+  passwordChangedAt?: string;
 }
 
 export interface DatabaseInfo {

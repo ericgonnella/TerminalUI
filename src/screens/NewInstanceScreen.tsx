@@ -9,11 +9,12 @@ import { ActivityLog }      from '../components/ActivityLog';
 import { Keybindings }      from '../components/Keybindings';
 import { PeekPasswordInput } from '../components/PeekPasswordInput';
 import { initDb, startInstance, findFreePort } from '../services/pgctl';
+import { validatePassword, validatePort } from '../services/security';
 import type { Navigation }     from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
-import type { Instance, LogEntry } from '../types';
+import type { Instance, InstallationType, LogEntry } from '../types';
 
-type Step = 'name' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
+type Step = 'placement' | 'name' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
 type Phase = 'idle' | 'initdb' | 'starting' | 'verifying' | 'complete';
 
 const PHASES: { id: Phase; label: string }[] = [
@@ -43,7 +44,8 @@ interface NewInstanceScreenProps {
 export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   nav, instances, pgCtlBin, initdbBin,
 }) => {
-  const [step,            setStep]           = useState<Step>('name');
+  const [step,            setStep]           = useState<Step>('placement');
+  const [placement,       setPlacement]      = useState<InstallationType>('local');
   const [name,            setName]           = useState('');
   const [port,            setPort]           = useState('');
   const [portError,       setPortError]      = useState<string | null>(null);
@@ -79,19 +81,12 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   }, [resolveDefaults]);
 
   const handlePortSubmit = useCallback((value: string) => {
-    const raw = value.trim();
-    const p   = parseInt(raw, 10);
-
-    // Reject non-numeric or out-of-range ports. 1024+ avoids privileged
-    // ports that require root/admin on most systems.
-    if (isNaN(p) || p < 1 || p > 65535) {
-      setPortError('Port must be a number between 1 and 65535.');
+    const check = validatePort(value);
+    if (!check.ok) {
+      setPortError(check.reason);
       return;
     }
-    if (p < 1024) {
-      setPortError('Ports below 1024 require admin/root privileges. Pick 1024 or higher.');
-      return;
-    }
+    const p = check.value;
 
     // Reject collisions with any already-registered instance on the same host,
     // regardless of whether that instance is currently running. A stopped
@@ -116,16 +111,21 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   }, [instances.instances]);
 
   const handlePasswordSubmit = useCallback((value: string) => {
+    const check = validatePassword(value, placement);
+    if (!check.ok) {
+      setPasswordError(check.reason);
+      return;
+    }
     setPassword(value);
     setPasswordConfirm('');
     setPasswordError(null);
-    // Skip confirmation for trust auth (empty password)
+    // Skip confirmation for trust auth (empty password, local only)
     if (value.length === 0) {
       setStep('datadir');
     } else {
       setStep('password-confirm');
     }
-  }, []);
+  }, [placement]);
 
   const handlePasswordConfirmSubmit = useCallback((confirm: string) => {
     if (confirm === password) {
@@ -148,14 +148,16 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
 
     const portNum = parseInt(port, 10);
     const instance: Instance = {
-      id:        uuidv4(),
-      name:      name,
-      port:      portNum,
-      dataDir:   dir,
-      superuser: 'postgres',
-      createdAt: new Date().toISOString(),
+      id:          uuidv4(),
+      name:        name,
+      port:        portNum,
+      dataDir:     dir,
+      superuser:   'postgres',
+      createdAt:   new Date().toISOString(),
       hasPassword: password.length > 0,
-      password:  password || undefined,
+      password:    password || undefined,
+      installationType:   placement,
+      passwordChangedAt:  password.length > 0 ? new Date().toISOString() : undefined,
     };
 
     appendLog(makeLog('INFO', `Initialising data directory: ${dir}`));
@@ -193,7 +195,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
     setCreatedInstance(instance);
     setPhase('complete');
     setStep('done');
-  }, [name, port, password, dataDir, pgCtlBin, initdbBin, instances, appendLog]);
+  }, [name, port, password, dataDir, pgCtlBin, initdbBin, instances, appendLog, placement]);
 
   const poppedRef = useRef(false);
 
@@ -206,6 +208,26 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
                     key.upArrow || key.downArrow || key.leftArrow || key.rightArrow ||
                     key.tab || key.backspace || key.delete;
     if (!hasKey) return;
+
+    // Placement picker: L = local, H = hosted
+    if (step === 'placement') {
+      if (input === 'l' || input === 'L') {
+        setPlacement('local');
+        setStep('name');
+        return;
+      }
+      if (input === 'h' || input === 'H') {
+        setPlacement('hosted');
+        setStep('name');
+        return;
+      }
+      if (key.escape) {
+        if (poppedRef.current) return;
+        poppedRef.current = true;
+        nav.pop();
+      }
+      return;
+    }
 
     if (step === 'done' || step === 'error') {
       if (poppedRef.current) return;
@@ -229,9 +251,33 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
 
   return (
     <Box flexDirection="column">
+      {/* Placement picker — first step, chooses security posture */}
+      {step === 'placement' && (
+        <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
+          <Text bold color="cyan">{'Where is this instance running?'}</Text>
+          <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+          <Box flexDirection="column" marginTop={1}>
+            <Box>
+              <Text color="green" bold>{'[L] '}</Text>
+              <Text color="white" bold>{'Local / personal machine'}</Text>
+            </Box>
+            <Text color="gray" dimColor>{'     Bound to 127.0.0.1. Password recommended (min 8 chars).'}</Text>
+            <Text color="gray" dimColor>{'     Credentials stored encrypted in your user keychain / vault.'}</Text>
+          </Box>
+          <Box flexDirection="column" marginTop={1}>
+            <Box>
+              <Text color="yellow" bold>{'[H] '}</Text>
+              <Text color="white" bold>{'Hosted / shared server'}</Text>
+            </Box>
+            <Text color="gray" dimColor>{'     Network-reachable. Strong password REQUIRED (min 12, 3+ char classes).'}</Text>
+            <Text color="gray" dimColor>{'     Audit log enabled. Review firewall + pg_hba.conf after creation.'}</Text>
+          </Box>
+        </Box>
+      )}
+
       {/* Wizard config panel — hidden on 'done' to keep the success view compact
           (terminals shorter than the full output end up scrolling endlessly). */}
-      {step !== 'done' && (
+      {step !== 'done' && step !== 'placement' && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan" dimColor>
             {'Step '}
@@ -240,6 +286,10 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
              (step === 'password' || step === 'password-confirm') ? '3' : '4'}
             {' of 4'}
             {step === 'password-confirm' ? '  (confirm password)' : ''}
+            {'   \u2014   '}
+            <Text color={placement === 'hosted' ? 'yellow' : 'green'} bold>
+              {placement === 'hosted' ? 'HOSTED mode' : 'LOCAL mode'}
+            </Text>
           </Text>
 
           {/* Step 1 — Name */}
@@ -418,7 +468,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
             <Text color="gray">{'Connection URL:'}</Text>
             <Text color="cyan">{
               createdInstance.hasPassword
-                ? `  postgresql://${createdInstance.superuser}:${password}@127.0.0.1:${createdInstance.port}/postgres`
+                ? `  postgresql://${createdInstance.superuser}:<your-password>@127.0.0.1:${createdInstance.port}/postgres`
                 : `  postgresql://${createdInstance.superuser}@127.0.0.1:${createdInstance.port}/postgres`
             }</Text>
             <Text color="gray">{'psql:'}</Text>
@@ -451,13 +501,20 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       )}
 
       {step !== 'done' && (
-        <Keybindings bindings={isDllError && step === 'error' ? [
-          { key: 'G',   label: 'download PostgreSQL' },
-          { key: 'any', label: 'go back' },
-        ] : [
-          { key: 'Enter', label: 'next/confirm' },
-          { key: 'Esc',   label: 'cancel' },
-        ]} />
+        <Keybindings bindings={
+          step === 'placement' ? [
+            { key: 'L', label: 'local' },
+            { key: 'H', label: 'hosted' },
+            { key: 'Esc', label: 'cancel' },
+          ]
+          : isDllError && step === 'error' ? [
+            { key: 'G',   label: 'download PostgreSQL' },
+            { key: 'any', label: 'go back' },
+          ] : [
+            { key: 'Enter', label: 'next/confirm' },
+            { key: 'Esc',   label: 'cancel' },
+          ]
+        } />
       )}
     </Box>
   );

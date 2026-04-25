@@ -1,7 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as fs from 'fs';
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
+import {
+  probeInstanceSecurity,
+  type SecurityProbeResult,
+  type CheckStatus,
+} from '../services/securityProbe';
 import { Keybindings }        from '../components/Keybindings';
 import { ConfirmDialog }      from '../components/ConfirmDialog';
 import { getInstanceStatusColor } from '../theme';
@@ -24,6 +29,22 @@ const STATUS_ICON: Record<InstanceStatus, string> = {
   error:   '✗',
 };
 
+/** Visual indicators for security check results. */
+const CHECK_ICON: Record<CheckStatus, string> = {
+  pass: '✓',
+  warn: '⚠',
+  fail: '✗',
+  skip: '—',
+  info: 'ℹ',
+};
+const CHECK_COLOR: Record<CheckStatus, string> = {
+  pass: 'green',
+  warn: 'yellow',
+  fail: 'red',
+  skip: 'gray',
+  info: 'cyan',
+};
+
 interface HomeScreenProps {
   nav:        Navigation;
   instances:  InstancesState;
@@ -40,6 +61,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
   const [opLog,         setOpLog]         = useState<string | null>(null);
   const [opError,       setOpError]       = useState<string | null>(null);
   const [showInfo,      setShowInfo]      = useState(false);
+  const [showProbe,     setShowProbe]     = useState(false);
+  // Security probe: keyed by instance ID. A ref tracks in-flight requests.
+  const [probeCache, setProbeCache]      = useState<Record<string, SecurityProbeResult>>({});
+  const [probeGen,   setProbeGen]        = useState(0); // increment to force recheck
+  const probeRunning                     = useRef<Set<string>>(new Set());
 
   const list = instances.instances;
 
@@ -58,6 +84,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
   }, [refreshStatuses]);
 
   const selected_instance: Instance | undefined = list[selected];
+
+  // Run the security probe whenever the probe panel is opened for an instance.
+  // Results are cached by instance ID so re-opening is instant.
+  const selectedId = selected_instance?.id;
+  useEffect(() => {
+    if (!showProbe || !selected_instance) return;
+    const id = selected_instance.id;
+    if (probeCache[id] || probeRunning.current.has(id)) return;
+    probeRunning.current.add(id);
+    const inst = selected_instance; // capture before async gap
+    probeInstanceSecurity(inst).then(result => {
+      probeRunning.current.delete(id);
+      setProbeCache(prev => ({ ...prev, [id]: result }));
+    }).catch(() => {
+      probeRunning.current.delete(id);
+    });
+  }, [showProbe, selectedId, probeGen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doToggle = useCallback(async (instance: Instance) => {
     const status = statuses[instance.id];
@@ -114,17 +157,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
     if (confirmDataDir) return; // delegate to data-dir ConfirmDialog
     if (busyId)    return;
 
-    // Close info panel with Escape or I before any other action
-    if (key.escape && showInfo) { setShowInfo(false); return; }
+    // Close panels with Escape
+    if (key.escape && showProbe) { setShowProbe(false); return; }
+    if (key.escape && showInfo)  { setShowInfo(false);  return; }
 
     // Escape also dismisses a visible error log before any other action.
     if (key.escape && opError) { setOpError(null); return; }
 
-    if (key.upArrow)    { setSelected(s => Math.max(0, s - 1)); setShowInfo(false); }
-    if (key.downArrow)  { setSelected(s => Math.min(list.length - 1, s + 1)); setShowInfo(false); }
+    if (key.upArrow)    { setSelected(s => Math.max(0, s - 1)); }
+    if (key.downArrow)  { setSelected(s => Math.min(list.length - 1, s + 1)); }
 
     if (input === 'i' || input === 'I') {
       setShowInfo(s => !s);
+    }
+
+    if (input === 'p' || input === 'P') {
+      if (showProbe && selected_instance) {
+        // Already open — recheck
+        const id = selected_instance.id;
+        setProbeCache(prev => { const next = { ...prev }; delete next[id]; return next; });
+        setProbeGen(g => g + 1);
+      } else {
+        setShowProbe(s => !s);
+      }
     }
     if (input === 'n' || input === 'N') {
       nav.push({ name: 'new-instance' });
@@ -293,20 +348,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
                 <Text color="white">{inst.winServiceName}</Text>
               </Box>
             )}
-            {inst.password && (
-              <Box borderStyle="single" borderColor="yellow" flexDirection="column" paddingX={1} marginTop={1}>
-                <Text color="yellow" bold>{'\u26a0  Password stored in plaintext'}</Text>
-                <Text color="gray">{'Config: ~/.pgmanager/config.json'}</Text>
-                {process.platform === 'win32' ? (
-                  <Text color="gray">{'Windows: right-click the file \u2192 Properties \u2192 Security, restrict to your user only.'}</Text>
-                ) : (
-                  <Text color="gray">{'Harden: chmod 600 ~/.pgmanager/config.json'}</Text>
-                )}
-                {isRemote && (
-                  <Text color="gray">{'VPS tip: prefer a restricted role (not superuser) and consider an SSH tunnel.'}</Text>
-                )}
-              </Box>
-            )}
             <Text color="gray">{'─'.repeat(56)}</Text>
             <Text color="gray">{'Connection URL:'}</Text>
             <Text color="cyan">{connUrl}</Text>
@@ -322,10 +363,64 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
         );
       })()}
 
+      {/* Security probe panel — toggled by [P] */}
+      {showProbe && selected_instance && (() => {
+        const inst = selected_instance;
+        const probe = probeCache[inst.id];
+        return (
+          <Box
+            borderStyle="round"
+            borderColor={inst.installationType === 'hosted' ? 'yellow' : 'green'}
+            flexDirection="column"
+            paddingX={2}
+            marginBottom={1}
+          >
+            <Text color={inst.installationType === 'hosted' ? 'yellow' : 'green'} bold>
+              {inst.installationType === 'hosted' ? '\u26a0  Security Probe \u2014 HOSTED' : '\u2713  Security Probe'}
+            </Text>
+            <Text color="gray">{'─'.repeat(56)}</Text>
+
+            {/* Vault encryption — always known, no connection needed */}
+            <Box flexDirection="row">
+              <Text color="green">{'\u2713 '}</Text>
+              <Text color="gray" bold>{'Credential storage: '}</Text>
+              <Text color="gray">{'AES-256-GCM vault.enc (mode 0600).'}</Text>
+            </Box>
+
+            {/* Live probe results */}
+            {!probe ? (
+              <Box flexDirection="row" marginTop={1}>
+                <Text color="yellow"><Spinner type="dots" /></Text>
+                <Text color="gray">{'  Running checks\u2026'}</Text>
+              </Box>
+            ) : (
+              <>
+                {probe.connectionError && (
+                  <Text color="gray" dimColor>
+                    {`Live checks skipped (server unreachable): ${probe.connectionError}`}
+                  </Text>
+                )}
+                {probe.checks.map((check, i) => (
+                  <Box key={i} flexDirection="row">
+                    <Text color={CHECK_COLOR[check.status]}>{`${CHECK_ICON[check.status]} `}</Text>
+                    <Text color="gray" bold>{`${check.label}: `}</Text>
+                    <Text color="gray">{check.detail}</Text>
+                  </Box>
+                ))}
+                <Text color="gray" dimColor>
+                  {`Checked at ${new Date(probe.ranAt).toLocaleTimeString()}  \u2014  [P] to recheck  [Esc] to close`}
+                </Text>
+              </>
+            )}
+          </Box>
+        );
+      })()}
+
       <Keybindings bindings={[
         { key: '\u2191\u2193', label: 'navigate' },
         { key: 'Enter', label: 'open' },
         { key: 'I', label: 'instance info' },
+        { key: 'P', label: showProbe ? 'recheck security' : 'security probe' },
         { key: 'N', label: 'new instance' },
         { key: 'A', label: 'add remote' },
         { key: 'S', label: 'start/stop' },

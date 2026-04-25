@@ -6,6 +6,7 @@ import { Keybindings }  from '../components/Keybindings';
 import type { Navigation } from '../hooks/useNavigation';
 import type { Instance }   from '../types';
 import { Pool }            from 'pg';
+import * as audit          from '../services/auditLog';
 
 interface QueryScreenProps {
   nav:      Navigation;
@@ -39,10 +40,12 @@ export const QueryScreen: React.FC<QueryScreenProps> = ({ nav, instance, databas
     setRowPage(0);
 
     const pool = new Pool({
-      host:     '127.0.0.1',
+      host:     instance.host ?? '127.0.0.1',
       port:     instance.port,
       user:     instance.superuser,
+      password: instance.password,
       database: database,
+      connectionTimeoutMillis: 5000,
     });
 
     const start = Date.now();
@@ -53,9 +56,12 @@ export const QueryScreen: React.FC<QueryScreenProps> = ({ nav, instance, databas
       const rows    = (res.rows as Record<string, unknown>[]) ?? [];
       setResult({ columns, rows, rowCount: res.rowCount ?? rows.length, duration });
       setMode('results');
+      audit.record({ category: 'query', action: 'execute', instanceId: instance.id, database, sql: trimmed, ok: true, meta: { rowCount: res.rowCount ?? rows.length, durationMs: duration } });
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
       setMode('error');
+      audit.record({ category: 'query', action: 'execute', instanceId: instance.id, database, sql: trimmed, ok: false, error: msg });
     } finally {
       await pool.end();
     }

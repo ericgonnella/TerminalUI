@@ -4,13 +4,21 @@ import TextInput from 'ink-text-input';
 import Spinner   from 'ink-spinner';
 import { Keybindings }    from '../components/Keybindings';
 import { ConfirmDialog }  from '../components/ConfirmDialog';
-import { listRoles, createRole, dropRole, grantDatabase } from '../services/users';
+import { listRoles, createRole, dropRole, grantDatabase, alterRole } from '../services/users';
 import { listDatabases }  from '../services/database';
 import { useAsync }       from '../hooks/useAsync';
 import type { Navigation } from '../hooks/useNavigation';
 import type { UserInfo, DatabaseInfo, Instance } from '../types';
 
-type Mode = 'list' | 'create-name' | 'create-pass' | 'grant-db' | 'confirm-drop' | 'busy';
+type Mode = 'list' | 'create-name' | 'create-pass' | 'grant-db' | 'confirm-drop' | 'busy' | 'alter';
+
+const EDIT_ATTRS = ['superuser', 'canLogin', 'replication'] as const;
+type EditAttr = typeof EDIT_ATTRS[number];
+const EDIT_LABELS: Record<EditAttr, string> = {
+  superuser:   'SUPERUSER',
+  canLogin:    'LOGIN',
+  replication: 'REPLICATION',
+};
 
 interface UsersScreenProps {
   nav:      Navigation;
@@ -25,6 +33,8 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
   const [newPass,    setNewPass]   = useState('');
   const [reloadTick, setReloadTick] = useState(0);
   const [opMsg,      setOpMsg]     = useState<string | null>(null);
+  const [editAttrs,  setEditAttrs] = useState<Record<EditAttr, boolean>>({ superuser: false, canLogin: true, replication: false });
+  const [editCursor, setEditCursor] = useState(0);
 
   const rolesState = useAsync<UserInfo[]>(
     () => listRoles(instance),
@@ -56,6 +66,21 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
       reload(); setMode('list');
     }
   }, [instance, newName, newPass, reload]);
+
+  const doAlter = useCallback(async () => {
+    const role = roles[selected];
+    if (!role) { setMode('list'); return; }
+    setMode('busy');
+    setOpMsg(`Updating role "${role.name}"...`);
+    try {
+      await alterRole(instance, role.name, editAttrs);
+      setOpMsg(`Role "${role.name}" updated.`);
+    } catch (e: unknown) {
+      setOpMsg(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      reload(); setMode('list');
+    }
+  }, [instance, roles, selected, editAttrs, reload]);
 
   const doDrop = useCallback(async () => {
     const role = roles[selected];
@@ -100,11 +125,31 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
       return;
     }
 
+    if (mode === 'alter') {
+      if (key.upArrow)   setEditCursor(s => Math.max(0, s - 1));
+      if (key.downArrow) setEditCursor(s => Math.min(EDIT_ATTRS.length - 1, s + 1));
+      if (input === ' ') {
+        const attr = EDIT_ATTRS[editCursor]!;
+        setEditAttrs(prev => ({ ...prev, [attr]: !prev[attr] }));
+      }
+      if (key.return || input === '\r') void doAlter();
+      if (key.escape) setMode('list');
+      return;
+    }
+
     if (key.upArrow)   setSelected(s => Math.max(0, s - 1));
     if (key.downArrow) setSelected(s => Math.min(roles.length - 1, s + 1));
     if (key.escape)    nav.pop();
     if (input === 'n' || input === 'N') { setNewName(''); setNewPass(''); setMode('create-name'); }
     if (input === 'd' || input === 'D') { if (roles[selected]) setMode('confirm-drop'); }
+    if (input === 'e' || input === 'E') {
+      const role = roles[selected];
+      if (role) {
+        setEditAttrs({ superuser: role.superuser, canLogin: role.canLogin, replication: role.replication });
+        setEditCursor(0);
+        setMode('alter');
+      }
+    }
     if (input === 'g' || input === 'G') { if (roles[selected]) { setDbSel(0); setMode('grant-db'); } }
   });
 
@@ -190,6 +235,22 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
         </Box>
       )}
 
+      {mode === 'alter' && selectedRole && (
+        <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
+          <Text bold color="cyan">{`Edit role: "${selectedRole.name}"`}</Text>
+          <Text color="gray" dimColor>{'─'.repeat(34)}</Text>
+          {EDIT_ATTRS.map((attr, i) => (
+            <Box key={attr}>
+              <Text color={i === editCursor ? 'cyan' : 'white'} bold={i === editCursor}>
+                {`${i === editCursor ? '▶ ' : '  '}[${editAttrs[attr] ? '✓' : '✗'}] ${EDIT_LABELS[attr]}`}
+              </Text>
+            </Box>
+          ))}
+          <Text color="gray" dimColor>{'─'.repeat(34)}</Text>
+          <Text color="gray" dimColor>{'[Space] toggle  [Enter] save  [Esc] cancel'}</Text>
+        </Box>
+      )}
+
       {mode === 'confirm-drop' && selectedRole && (
         <ConfirmDialog
           message={`Drop role "${selectedRole.name}"?`}
@@ -206,11 +267,12 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
       {!!opMsg && <Box marginBottom={1}><Text color="gray" dimColor>{`  ${opMsg}`}</Text></Box>}
 
       <Keybindings bindings={[
-        { key: '↑↓',  label: 'navigate' },
-        { key: 'N',   label: 'new role' },
-        { key: 'G',   label: 'grant db' },
-        { key: 'D',   label: 'drop'     },
-        { key: 'Esc', label: 'back'     },
+        { key: '↑↓',  label: 'navigate'    },
+        { key: 'N',   label: 'new role'    },
+        { key: 'E',   label: 'edit role'   },
+        { key: 'G',   label: 'grant db'    },
+        { key: 'D',   label: 'drop'        },
+        { key: 'Esc', label: 'back'        },
       ]} />
     </Box>
   );

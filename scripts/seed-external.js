@@ -14,25 +14,39 @@ const os   = require('os');
 const { randomUUID } = require('crypto');
 
 // ─── Connection details ───────────────────────────────────────────────────────
-const HOST     = '127.0.0.1';
-const PORT     = 5433;
-const USER     = 'postgres';
-const PASSWORD = process.env.PG_PASSWORD || 'eg101193';
-const DATABASE = 'postgres';
+// All connection parameters are required via environment variables. The script
+// REFUSES to run with a hardcoded/default password to prevent accidental
+// credential leaks into source control.
+const HOST     = process.env.PG_HOST     || '127.0.0.1';
+const PORT     = parseInt(process.env.PG_PORT || '5433', 10);
+const USER     = process.env.PG_USER     || 'postgres';
+const PASSWORD = process.env.PG_PASSWORD;
+const DATABASE = process.env.PG_DATABASE || 'postgres';
+
+if (!PASSWORD) {
+  console.error(
+    'ERROR: PG_PASSWORD environment variable is required.\n' +
+    '       Copy .env.example to .env, fill in your credentials, and re-run.\n' +
+    '       Example: PG_PASSWORD="<your password>" node scripts/seed-external.js'
+  );
+  process.exit(1);
+}
 
 // ─── Config path ─────────────────────────────────────────────────────────────
 const CONFIG_DIR  = path.join(os.homedir(), '.pgmanager');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 function loadConfig() {
-  if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   if (!fs.existsSync(CONFIG_FILE)) return { instances: [] };
   try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')); }
   catch { return { instances: [] }; }
 }
 
 function saveConfig(cfg) {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  // Best-effort tighten on existing files where mode option above is a no-op.
+  try { fs.chmodSync(CONFIG_FILE, 0o600); } catch { /* Windows no-op */ }
 }
 
 // ─── Register instance ────────────────────────────────────────────────────────
@@ -50,7 +64,11 @@ function registerInstance() {
     port:       PORT,
     dataDir:    '',          // not managed by this app
     superuser:  USER,
-    password:   PASSWORD,
+    // NOTE: password is intentionally NOT written to config.json.
+    // The real pgmanager app stores credentials in an encrypted vault.
+    // This seed script only registers the connection metadata; the TUI
+    // will prompt for the password on first connect (or you can import
+    // the instance through the UI which writes to the vault).
     hasPassword: true,
     external:   true,
     createdAt:  new Date().toISOString(),

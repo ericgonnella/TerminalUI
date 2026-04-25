@@ -1,5 +1,6 @@
 import { Client } from 'pg';
 import type { Instance, DatabaseInfo } from '../types';
+import * as audit from './auditLog';
 
 function clientFor(instance: Instance, database = 'postgres'): Client {
   return new Client({
@@ -49,6 +50,10 @@ export async function createDatabase(instance: Instance, name: string): Promise<
   try {
     // pg.escapeIdentifier guards against SQL injection in identifier position
     await client.query(`CREATE DATABASE ${client.escapeIdentifier(name)}`);
+    audit.record({ category: 'database', action: 'create', instanceId: instance.id, target: name, ok: true });
+  } catch (err: any) {
+    audit.record({ category: 'database', action: 'create', instanceId: instance.id, target: name, ok: false, error: err?.message ?? String(err) });
+    throw err;
   } finally {
     await client.end();
   }
@@ -63,15 +68,33 @@ export async function dropDatabase(instance: Instance, name: string): Promise<vo
       [name],
     );
     await client.query(`DROP DATABASE IF EXISTS ${client.escapeIdentifier(name)}`);
+    audit.record({ category: 'database', action: 'drop', instanceId: instance.id, target: name, ok: true });
+  } catch (err: any) {
+    audit.record({ category: 'database', action: 'drop', instanceId: instance.id, target: name, ok: false, error: err?.message ?? String(err) });
+    throw err;
   } finally {
     await client.end();
   }
 }
 
+/**
+ * Build a libpq-style connection string. Includes the password in plaintext
+ * so it can be passed to `psql -c` or similar — CALLERS MUST NOT log or
+ * display the return value. Use `getRedactedConnectionString` for display.
+ */
 export function getConnectionString(instance: Instance, database: string): string {
   const host = instance.host ?? '127.0.0.1';
   const auth = instance.password
     ? `${instance.superuser}:${encodeURIComponent(instance.password)}`
+    : instance.superuser;
+  return `postgresql://${auth}@${host}:${instance.port}/${database}`;
+}
+
+/** Safe-to-display connection string — password is replaced with `****`. */
+export function getRedactedConnectionString(instance: Instance, database: string): string {
+  const host = instance.host ?? '127.0.0.1';
+  const auth = instance.hasPassword
+    ? `${instance.superuser}:****`
     : instance.superuser;
   return `postgresql://${auth}@${host}:${instance.port}/${database}`;
 }
@@ -166,6 +189,10 @@ export async function renameDatabase(
     await client.query(
       `ALTER DATABASE ${client.escapeIdentifier(oldName)} RENAME TO ${client.escapeIdentifier(newName)}`,
     );
+    audit.record({ category: 'database', action: 'rename', instanceId: instance.id, target: oldName, ok: true, meta: { newName } });
+  } catch (err: any) {
+    audit.record({ category: 'database', action: 'rename', instanceId: instance.id, target: oldName, ok: false, error: err?.message ?? String(err), meta: { newName } });
+    throw err;
   } finally {
     await client.end();
   }
@@ -182,6 +209,10 @@ export async function changeOwner(
     await client.query(
       `ALTER DATABASE ${client.escapeIdentifier(dbName)} OWNER TO ${client.escapeIdentifier(newOwner)}`,
     );
+    audit.record({ category: 'database', action: 'change-owner', instanceId: instance.id, target: dbName, ok: true, meta: { newOwner } });
+  } catch (err: any) {
+    audit.record({ category: 'database', action: 'change-owner', instanceId: instance.id, target: dbName, ok: false, error: err?.message ?? String(err), meta: { newOwner } });
+    throw err;
   } finally {
     await client.end();
   }

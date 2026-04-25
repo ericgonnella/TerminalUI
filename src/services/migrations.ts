@@ -2,6 +2,7 @@ import { Client }   from 'pg';
 import * as fs      from 'fs';
 import * as path    from 'path';
 import type { Instance, MigrationRecord } from '../types';
+import * as audit from './auditLog';
 
 const MIGRATIONS_TABLE = 'pgmanager_migrations';
 
@@ -44,11 +45,16 @@ export async function getAppliedMigrations(
 
 export function discoverMigrationFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
+  const resolvedDir = path.resolve(dir);
   return fs
-    .readdirSync(dir)
+    .readdirSync(resolvedDir)
     .filter(f => f.endsWith('.sql'))
     .sort()
-    .map(f => path.join(dir, f));
+    .map(f => path.join(resolvedDir, f))
+    // Path-traversal guard: readdirSync never returns '..' entries, but we
+    // still verify each resolved path is inside the intended directory in
+    // case of future refactors or symlinked entries.
+    .filter(full => path.resolve(full).startsWith(resolvedDir + path.sep));
 }
 
 export async function runMigration(
@@ -57,8 +63,15 @@ export async function runMigration(
   filePath:  string,
   onLine?:   (line: string) => void,
 ): Promise<void> {
-  const filename = path.basename(filePath);
-  const sql      = fs.readFileSync(filePath, 'utf-8');
+  const resolved = path.resolve(filePath);
+  const filename = path.basename(resolved);
+  // Defense-in-depth: require that the file actually exists on disk and is a
+  // regular file. Rejects piping, device files, etc.
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile()) {
+    throw new Error(`Migration path is not a regular file: ${resolved}`);
+  }
+  const sql      = fs.readFileSync(resolved, 'utf-8');
 
   const client = clientFor(instance, database);
   await client.connect();
@@ -84,9 +97,11 @@ export async function runMigration(
         [filename],
       );
       await client.query('COMMIT');
+      audit.record({ category: 'migration', action: 'apply', instanceId: instance.id, database, target: filename, ok: true });
       onLine?.(`✓ Applied ${filename}`);
-    } catch (err) {
+    } catch (err: any) {
       await client.query('ROLLBACK');
+      audit.record({ category: 'migration', action: 'apply', instanceId: instance.id, database, target: filename, ok: false, error: err?.message ?? String(err) });
       throw err;
     }
   } finally {
