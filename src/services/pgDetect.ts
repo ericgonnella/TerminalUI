@@ -105,6 +105,123 @@ async function findWindowsService(): Promise<WinSvcInfo | null> {
 // --- Cross-platform binary search ---------------------------------------------
 
 /**
+ * Describes a single available PostgreSQL installation that can be used to
+ * create a new instance (initdb + pg_ctl). Used by the version-picker in the
+ * New Instance wizard.
+ */
+export interface InstalledVersion {
+  /** Major version number, e.g. 17, 16, 15. */
+  major:    number;
+  /** Human-readable label shown in the picker, e.g. "PostgreSQL 17.4". */
+  label:    string;
+  /** Source: 'managed' = EDB portable download; 'system' = OS-installed. */
+  source:   'managed' | 'system';
+  pgCtl:    string;
+  initdb:   string;
+  /** Full patch version string, e.g. "17.4". */
+  version:  string;
+}
+
+/**
+ * Return every PostgreSQL version available on this machine, newest first.
+ * Managed (EDB portable) versions are listed before system-installed ones at
+ * the same major so the picker can distinguish them.
+ *
+ * Returns an empty array when nothing is installed.
+ */
+export async function allInstalledVersions(): Promise<InstalledVersion[]> {
+  const results: InstalledVersion[] = [];
+  const seenMajors = new Set<string>(); // key = `${source}:${major}`
+
+  const ext = process.platform === 'win32' ? '.exe' : '';
+
+  // 1. Managed (EDB portable) versions — one per major under ~/.pgmanager/pg-versions/
+  for (const major of installedMajors()) {
+    const binDir = managedBinDir(major);
+    if (!binDir) continue;
+    const pgCtl  = path.join(binDir, `pg_ctl${ext}`);
+    const initdb = path.join(binDir, `initdb${ext}`);
+    if (!fs.existsSync(initdb)) continue;
+    const ver = await getVersion(path.join(binDir, `psql${ext}`));
+    const key = `managed:${major}`;
+    if (seenMajors.has(key)) continue;
+    seenMajors.add(key);
+    results.push({
+      major,
+      label:   `PostgreSQL ${ver}  (managed — ~/.pgmanager/pg-versions/${major})`,
+      source:  'managed',
+      pgCtl:   fs.existsSync(pgCtl) ? pgCtl : '',
+      initdb,
+      version: ver,
+    });
+  }
+
+  // 2. System-installed: Windows Program Files
+  if (process.platform === 'win32') {
+    for (const binDir of windowsCandidateDirs()) {
+      const pgCtl  = path.join(binDir, 'pg_ctl.exe');
+      const initdb = path.join(binDir, 'initdb.exe');
+      const psql   = path.join(binDir, 'psql.exe');
+      if (!fs.existsSync(initdb)) continue;
+      const ver = await getVersion(psql);
+      const major = parseInt(ver.split('.')[0] ?? '0', 10);
+      if (!major) continue;
+      const key = `system:${major}`;
+      if (seenMajors.has(key)) continue;
+      seenMajors.add(key);
+      results.push({
+        major,
+        label:   `PostgreSQL ${ver}  (system — ${binDir})`,
+        source:  'system',
+        pgCtl:   fs.existsSync(pgCtl) ? pgCtl : '',
+        initdb,
+        version: ver,
+      });
+    }
+  }
+
+  // 3. System-installed: Linux PGDG versioned layout (/usr/lib/postgresql/<ver>/bin)
+  if (process.platform === 'linux') {
+    const root = '/usr/lib/postgresql';
+    try {
+      const entries = fs.readdirSync(root)
+        .map(n => ({ n, ver: parseFloat(n) || 0 }))
+        .filter(e => e.ver > 0)
+        .sort((a, b) => b.ver - a.ver);
+      for (const { n } of entries) {
+        const binDir = path.join(root, n, 'bin');
+        const pgCtl  = path.join(binDir, 'pg_ctl');
+        const initdb = path.join(binDir, 'initdb');
+        const psql   = path.join(binDir, 'psql');
+        if (!fs.existsSync(initdb)) continue;
+        const ver   = await getVersion(psql);
+        const major = parseInt(n, 10);
+        if (!major) continue;
+        const key = `system:${major}`;
+        if (seenMajors.has(key)) continue;
+        seenMajors.add(key);
+        results.push({
+          major,
+          label:   `PostgreSQL ${ver}  (apt — /usr/lib/postgresql/${n}/bin)`,
+          source:  'system',
+          pgCtl:   fs.existsSync(pgCtl) ? pgCtl : '',
+          initdb,
+          version: ver,
+        });
+      }
+    } catch { /* /usr/lib/postgresql not present */ }
+  }
+
+  // Sort: newest major first; within same major, managed before system.
+  results.sort((a, b) => {
+    if (b.major !== a.major) return b.major - a.major;
+    return a.source === 'managed' ? -1 : 1;
+  });
+
+  return results;
+}
+
+/**
  * Check if a managed (self-contained) version is available and return its binaries.
  * Managed versions are always preferred because they are complete — no DLL issues.
  */

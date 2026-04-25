@@ -10,11 +10,13 @@ import { Keybindings }      from '../components/Keybindings';
 import { PeekPasswordInput } from '../components/PeekPasswordInput';
 import { initDb, startInstance, findFreePort } from '../services/pgctl';
 import { validatePassword, validatePort } from '../services/security';
+import { allInstalledVersions } from '../services/pgDetect';
+import type { InstalledVersion } from '../services/pgDetect';
 import type { Navigation }     from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
 import type { Instance, InstallationType, LogEntry } from '../types';
 
-type Step = 'placement' | 'name' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
+type Step = 'version' | 'placement' | 'name' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
 type Phase = 'idle' | 'initdb' | 'starting' | 'verifying' | 'complete';
 
 const PHASES: { id: Phase; label: string }[] = [
@@ -58,16 +60,42 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   const [phase,   setPhase]   = useState<Phase>('idle');
   const [createdInstance, setCreatedInstance] = useState<Instance | null>(null);
 
-  // Detect the PostgreSQL version from the initdb binary at mount time so we
-  // can show the user which version will be used before they start setup.
+  // All available PostgreSQL installations on this machine. Loaded once at mount.
+  const [availableVersions, setAvailableVersions] = useState<InstalledVersion[]>([]);
+  const [versionIdx,        setVersionIdx]        = useState(0);
+  // The active binaries — start from props, updated when user picks a version.
+  const [activeInitdb, setActiveInitdb] = useState(initdbBin);
+  const [activePgCtl,  setActivePgCtl]  = useState(pgCtlBin);
+
+  useEffect(() => {
+    allInstalledVersions().then(versions => {
+      setAvailableVersions(versions);
+      // If more than one version exists, ask the user to choose before placement.
+      // If there is only one (or none), skip straight to placement and use the
+      // prop-provided binaries as-is.
+      if (versions.length > 1) {
+        setStep('version');
+        // Pre-select whichever entry matches the prop-provided initdb.
+        const idx = versions.findIndex(v => v.initdb === initdbBin);
+        setVersionIdx(idx >= 0 ? idx : 0);
+        if (versions[0]) {
+          setActiveInitdb(versions[0].initdb);
+          setActivePgCtl(versions[0].pgCtl);
+        }
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Detect the PostgreSQL version label from the active initdb binary.
   const [pgVersion, setPgVersion] = useState<string>('');
   useEffect(() => {
-    if (!initdbBin) return;
-    execFile(initdbBin, ['--version'], (_err, stdout) => {
+    if (!activeInitdb) return;
+    execFile(activeInitdb, ['--version'], (_err, stdout) => {
       const match = stdout?.match(/(\d+\.\d+)/);
       if (match) setPgVersion(match[1] ?? '');
     });
-  }, [initdbBin]);
+  }, [activeInitdb]);
 
   // Slow-tick spinner: 1s interval instead of ink-spinner's ~80ms so we only
   // cause one full Ink re-render per second during the running phase, reducing
@@ -185,8 +213,8 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
     };
 
     appendLog(makeLog('INFO', `Initialising data directory: ${dir}`));
-    appendLog(makeLog('DEBUG', `initdb: ${initdbBin}`));
-    const initRes = await initDb(initdbBin, dir, 'postgres', line => {
+    appendLog(makeLog('DEBUG', `initdb: ${activeInitdb}`));
+    const initRes = await initDb(activeInitdb, dir, 'postgres', line => {
       appendLog(makeLog('DEBUG', line));
     }, password || undefined);
 
@@ -200,8 +228,8 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
     appendLog(makeLog('INFO', 'Data directory initialised.'));
     setPhase('starting');
     appendLog(makeLog('INFO', `Starting on port ${portNum}...`));
-    appendLog(makeLog('DEBUG', `pg_ctl: ${pgCtlBin || '(Windows service)'}`))
-    const startRes = await startInstance(pgCtlBin, instance, line => {
+    appendLog(makeLog('DEBUG', `pg_ctl: ${activePgCtl || '(Windows service)'}`));
+    const startRes = await startInstance(activePgCtl, instance, line => {
       appendLog(makeLog('DEBUG', line));
     });
 
@@ -219,7 +247,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
     setCreatedInstance(instance);
     setPhase('complete');
     setStep('done');
-  }, [name, port, password, dataDir, pgCtlBin, initdbBin, instances, appendLog, placement]);
+  }, [name, port, password, dataDir, activePgCtl, activeInitdb, instances, appendLog, placement]);
 
   const poppedRef = useRef(false);
 
@@ -232,6 +260,38 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
                     key.upArrow || key.downArrow || key.leftArrow || key.rightArrow ||
                     key.tab || key.backspace || key.delete;
     if (!hasKey) return;
+
+    // Version picker: ↑/↓ to move, Enter to confirm
+    if (step === 'version') {
+      if (key.upArrow) {
+        setVersionIdx(i => {
+          const next = Math.max(0, i - 1);
+          const v = availableVersions[next];
+          if (v) { setActiveInitdb(v.initdb); setActivePgCtl(v.pgCtl); }
+          return next;
+        });
+        return;
+      }
+      if (key.downArrow) {
+        setVersionIdx(i => {
+          const next = Math.min(availableVersions.length - 1, i + 1);
+          const v = availableVersions[next];
+          if (v) { setActiveInitdb(v.initdb); setActivePgCtl(v.pgCtl); }
+          return next;
+        });
+        return;
+      }
+      if (key.return) {
+        setStep('placement');
+        return;
+      }
+      if (key.escape) {
+        if (poppedRef.current) return;
+        poppedRef.current = true;
+        nav.pop();
+      }
+      return;
+    }
 
     // Placement picker: L = local, H = hosted
     if (step === 'placement') {
@@ -275,14 +335,35 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
 
   return (
     <Box flexDirection="column">
+      {/* Version picker — shown only when multiple PostgreSQL versions are installed */}
+      {step === 'version' && (
+        <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
+          <Text bold color="cyan">{'Select PostgreSQL version'}</Text>
+          <Text color="gray" dimColor>{'Use ↑ / ↓ to move, Enter to confirm'}</Text>
+          <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+          <Box flexDirection="column" marginTop={1}>
+            {availableVersions.map((v, i) => (
+              <Box key={v.initdb}>
+                <Text color={i === versionIdx ? 'cyan' : 'gray'} bold={i === versionIdx}>
+                  {i === versionIdx ? '▶ ' : '  '}
+                </Text>
+                <Text color={i === versionIdx ? 'white' : 'gray'} bold={i === versionIdx}>
+                  {v.label}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      )}
+
       {/* Placement picker — first step, chooses security posture */}
       {step === 'placement' && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan">{'Where is this instance running?'}</Text>
           {pgVersion ? (
-            <Text color="gray" dimColor>{`Using PostgreSQL ${pgVersion}  (${initdbBin})`}</Text>
+            <Text color="gray" dimColor>{`Using PostgreSQL ${pgVersion}  (${activeInitdb})`}</Text>
           ) : (
-            <Text color="gray" dimColor>{`initdb: ${initdbBin || '(not found)'}`}</Text>
+            <Text color="gray" dimColor>{`initdb: ${activeInitdb || '(not found)'}`}</Text>
           )}
           <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
           <Box flexDirection="column" marginTop={1}>
@@ -306,7 +387,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
 
       {/* Wizard config panel — hidden on 'done' to keep the success view compact
           (terminals shorter than the full output end up scrolling endlessly). */}
-      {step !== 'done' && step !== 'placement' && (
+      {step !== 'done' && step !== 'placement' && step !== 'version' && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan" dimColor>
             {'Step '}
