@@ -360,20 +360,69 @@ export async function downloadVersion(
   }
 
   // ── Step 2: extract ──────────────────────────────────────────────────────
+  // Signal the UI that we've moved to the extraction phase.
   onProgress({ phase: 'extracting', downloaded: 0, total: 0, message: 'Extracting…' });
 
+  // Extraction can take 10–30 s for a 60–80 MB ZIP. We run it off the main
+  // thread so the Node event loop stays free and the UI spinner keeps updating.
+  // • Windows / macOS: AdmZip run inside a worker_threads Worker (same speed
+  //   as synchronous extraction, but non-blocking for the Ink renderer).
+  // • Linux EDB portable path: spawn tar asynchronously.
   try {
-    if (platform() === 'linux') {
-      // tar.gz — use child_process since AdmZip only handles ZIP
-      const { spawnSync } = await import('child_process');
-      const result = spawnSync('tar', ['xzf', tmpFile, '-C', destDir], { stdio: 'pipe' });
-      if (result.status !== 0) {
-        throw new Error(result.stderr?.toString() || 'tar extraction failed');
+    let extractSecs = 0;
+    const extractTimer = setInterval(() => {
+      extractSecs++;
+      onProgress({
+        phase: 'extracting',
+        downloaded: 0,
+        total: 0,
+        message: `Extracting… ${extractSecs}s`,
+      });
+    }, 1000);
+
+    try {
+      if (platform() === 'linux') {
+        // tar.gz — async spawn so event loop stays free
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('tar', ['xzf', tmpFile, '-C', destDir], { stdio: ['ignore', 'pipe', 'pipe'] });
+          let errOut = '';
+          proc.stderr?.on('data', (d: Buffer) => { errOut += d.toString(); });
+          proc.on('error', reject);
+          proc.on('exit', (code) => {
+            if (code !== 0) reject(new Error(errOut.trim() || `tar exited with code ${code}`));
+            else resolve();
+          });
+        });
+      } else {
+        // ZIP (Windows + macOS): run AdmZip in a worker thread so the
+        // synchronous extraction doesn't block Node's event loop.
+        // The worker is eval'd inline — no separate file needed.
+        const { Worker } = await import('worker_threads');
+        const workerCode = [
+          "const { workerData, parentPort } = require('worker_threads');",
+          "const AdmZip = require('adm-zip');",
+          "try {",
+          "  const zip = new AdmZip(workerData.tmpFile);",
+          "  zip.extractAllTo(workerData.destDir, true);",
+          "  parentPort.postMessage({ ok: true });",
+          "} catch (e) {",
+          "  parentPort.postMessage({ ok: false, error: e.message });",
+          "}",
+        ].join('\n');
+        await new Promise<void>((resolve, reject) => {
+          const worker = new Worker(workerCode, {
+            eval: true,
+            workerData: { tmpFile, destDir },
+          });
+          worker.on('message', (msg: { ok: boolean; error?: string }) => {
+            if (msg.ok) resolve();
+            else reject(new Error(msg.error ?? 'Extraction failed'));
+          });
+          worker.on('error', reject);
+        });
       }
-    } else {
-      // ZIP (Windows + macOS)
-      const zip = new AdmZip(tmpFile);
-      zip.extractAllTo(destDir, true);
+    } finally {
+      clearInterval(extractTimer);
     }
 
     fs.unlinkSync(tmpFile);

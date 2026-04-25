@@ -305,6 +305,15 @@ export async function startInstance(
     const logDir  = path.join(instance.dataDir, 'pg_log');
     const logFile = path.join(logDir, 'startup.log');
     try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* ignore if can't create */ }
+
+    // On Windows, an unclean previous shutdown (e.g. Ctrl+C → 0xC000013A)
+    // can leave pg_log/startup.log locked. PostgreSQL's startup logger then
+    // gets a "sharing violation" opening the file, which aborts startup. Deleting
+    // the stale file before each start attempt clears the lock safely — PostgreSQL
+    // always recreates the file on startup, so no log data is lost.
+    if (process.platform === 'win32') {
+      try { fs.unlinkSync(logFile); } catch { /* not present or already released */ }
+    }
     const binDir    = path.dirname(pgCtlBin);
     const extraPath = windowsDllDirs(pgCtlBin);
 

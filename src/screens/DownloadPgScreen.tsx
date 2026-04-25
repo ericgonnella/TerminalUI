@@ -18,7 +18,7 @@ interface Props {
   onInstalled?: (major: number) => void;
 }
 
-type Phase = 'select' | 'confirm-download' | 'confirm-remove' | 'downloading' | 'done' | 'error';
+type Phase = 'select' | 'confirm-download' | 'confirm-remove' | 'downloading' | 'extracting' | 'done' | 'error';
 
 export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
   const [selected, setSelected] = useState(0);
@@ -34,7 +34,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
   // terminal flicker. A 1s interval reduces that to 1 re-render/s.
   const [spinTick, setSpinTick] = useState(0);
   useEffect(() => {
-    if (phase !== 'downloading') return;
+    if (phase !== 'downloading' && phase !== 'extracting') return;
     const t = setInterval(() => setSpinTick(n => n + 1), 1000);
     return () => clearInterval(t);
   }, [phase]);
@@ -78,6 +78,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
             : `Downloading…  ${humanBytes(d)}`);
         }
       } else if (p === 'extracting') {
+        setPhase('extracting');
         setMessage(m ?? 'Extracting archive…');
       } else if (p === 'done') {
         setMessage(m ?? 'Done');
@@ -100,7 +101,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
   }, [refreshInstalled]);
 
   useInput((input, key) => {
-    if (phase === 'downloading') return; // no input while busy
+    if (phase === 'downloading' || phase === 'extracting') return; // no input while busy
 
     if (phase === 'done' || phase === 'error') {
       const hasKey = !!input || key.return || key.escape ||
@@ -242,6 +243,17 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
           <Box marginTop={1}>
             <Text color="white">{progressBar(downloaded, total)}</Text>
             <Text color="cyan">{`  ${pct}`}</Text>
+          </Box>
+          <Text color="gray" dimColor>{message}</Text>
+        </Box>
+      )}
+
+      {/* Extracting */}
+      {phase === 'extracting' && (
+        <Box borderStyle="round" borderColor="cyan" paddingX={2} marginBottom={1} flexDirection="column">
+          <Box flexDirection="row">
+            <Text color="cyan">{spinChar}</Text>
+            <Text color="cyan" bold>{`  Extracting PostgreSQL ${selectedRelease.patch}`}</Text>
           </Box>
           <Text color="gray" dimColor>{message}</Text>
         </Box>
