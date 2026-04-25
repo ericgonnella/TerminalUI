@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import Spinner   from 'ink-spinner';
+import { execFile } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import * as os   from 'os';
 import * as path from 'path';
@@ -57,6 +57,29 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   const [error,   setError]   = useState<string | null>(null);
   const [phase,   setPhase]   = useState<Phase>('idle');
   const [createdInstance, setCreatedInstance] = useState<Instance | null>(null);
+
+  // Detect the PostgreSQL version from the initdb binary at mount time so we
+  // can show the user which version will be used before they start setup.
+  const [pgVersion, setPgVersion] = useState<string>('');
+  useEffect(() => {
+    if (!initdbBin) return;
+    execFile(initdbBin, ['--version'], (_err, stdout) => {
+      const match = stdout?.match(/(\d+\.\d+)/);
+      if (match) setPgVersion(match[1] ?? '');
+    });
+  }, [initdbBin]);
+
+  // Slow-tick spinner: 1s interval instead of ink-spinner's ~80ms so we only
+  // cause one full Ink re-render per second during the running phase, reducing
+  // terminal flicker heavily over SSH connections.
+  const [spinTick, setSpinTick] = useState(0);
+  useEffect(() => {
+    if (step !== 'running') return;
+    const t = setInterval(() => setSpinTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [step]);
+  const SPIN_CHARS = ['⠙', '⠸', '⠴', '⠦', '⠇', '⠋'];
+  const spinChar = SPIN_CHARS[spinTick % SPIN_CHARS.length] ?? '⠙';
 
   const appendLog = useCallback((entry: LogEntry) => {
     setLogs(l => [...l, entry]);
@@ -158,6 +181,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       password:    password || undefined,
       installationType:   placement,
       passwordChangedAt:  password.length > 0 ? new Date().toISOString() : undefined,
+      pgVersion:          pgVersion || undefined,
     };
 
     appendLog(makeLog('INFO', `Initialising data directory: ${dir}`));
@@ -255,6 +279,11 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       {step === 'placement' && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan">{'Where is this instance running?'}</Text>
+          {pgVersion ? (
+            <Text color="gray" dimColor>{`Using PostgreSQL ${pgVersion}  (${initdbBin})`}</Text>
+          ) : (
+            <Text color="gray" dimColor>{`initdb: ${initdbBin || '(not found)'}`}</Text>
+          )}
           <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
           <Box flexDirection="column" marginTop={1}>
             <Box>
@@ -402,7 +431,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       {step === 'running' && (
         <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={2} marginBottom={1}>
           <Box>
-            <Text color="yellow"><Spinner type="dots" /></Text>
+            <Text color="yellow">{spinChar}</Text>
             <Text color="yellow" bold>{'  Setting up your instance…'}</Text>
           </Box>
           {/* Progress bar */}
@@ -451,6 +480,12 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
               <Text color="cyan" bold>{createdInstance.name}</Text>
               <Text color="gray">{'   Port: '}</Text>
               <Text color="white">{String(createdInstance.port)}</Text>
+              {createdInstance.pgVersion && (
+                <>
+                  <Text color="gray">{'   PostgreSQL: '}</Text>
+                  <Text color="white">{createdInstance.pgVersion}</Text>
+                </>
+              )}
             </Box>
             <Box flexDirection="row">
               <Text color="gray">{'User:      '}</Text>

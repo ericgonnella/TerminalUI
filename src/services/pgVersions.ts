@@ -121,11 +121,14 @@ async function installViaApt(
 
   /** Async wrapper around `spawn`. Streams stderr+stdout into `tail`, returns
    *  exit code (or non-zero on signal/error). Always inherits a non-interactive
-   *  env so dpkg/apt/gpg never block waiting on a TTY prompt. */
+   *  env so dpkg/apt/gpg never block waiting on a TTY prompt.
+   *  onLine is called for every output line, allowing the caller to forward
+   *  progress to the UI without blocking Node's event loop. */
   function spawnCollect(
     cmd:     string,
     args:    string[],
     timeout = 600_000,
+    onLine?: (line: string) => void,
   ): Promise<{ code: number; out: string }> {
     return new Promise(resolve => {
       let settled = false;
@@ -145,7 +148,13 @@ async function installViaApt(
         resolve({ code: 1, out: err?.message ?? 'spawn failed' });
         return;
       }
-      const handle = (b: Buffer) => { out += b.toString(); };
+      const handle = (b: Buffer) => {
+        const text = b.toString();
+        out += text;
+        if (onLine) {
+          text.split(/\r?\n/).filter(Boolean).forEach(onLine);
+        }
+      };
       proc.stdout?.on('data', handle);
       proc.stderr?.on('data', handle);
       const timer = setTimeout(() => {
@@ -170,8 +179,8 @@ async function installViaApt(
   }
 
   /** Run a command; if it fails with a permission error, transparently retry with sudo. */
-  async function run(cmd: string, args: string[], timeout = 600_000): Promise<{ ok: boolean; out: string }> {
-    let r = await spawnCollect(cmd, args, timeout);
+  async function run(cmd: string, args: string[], timeout = 600_000, onLine?: (line: string) => void): Promise<{ ok: boolean; out: string }> {
+    let r = await spawnCollect(cmd, args, timeout, onLine);
     if (r.code === 0) return { ok: true, out: r.out };
     const stderr = r.out;
     if (
@@ -181,7 +190,7 @@ async function installViaApt(
     ) {
       // Use `-n` so sudo never prompts for a password from a pipe (which would
       // hang forever). The user must have NOPASSWD or a cached credential.
-      r = await spawnCollect('sudo', ['-n', cmd, ...args], timeout);
+      r = await spawnCollect('sudo', ['-n', cmd, ...args], timeout, onLine);
     }
     return { ok: r.code === 0, out: r.out.trim() };
   }
@@ -196,8 +205,20 @@ async function installViaApt(
   onProgress({ phase: 'downloading', downloaded: 0, total: 0,
     message: `Installing postgresql-${release.major} via apt-get…` });
 
+  // Throttle apt output lines to the UI: max one progress update every 300ms.
+  // Without throttling, a verbose apt run emits hundreds of lines/second which
+  // would trigger hundreds of Ink re-renders and cause extreme terminal flicker.
+  let lastProgressMs = 0;
+  const forwardLine = (line: string): void => {
+    const now = Date.now();
+    if (now - lastProgressMs >= 300) {
+      lastProgressMs = now;
+      onProgress({ phase: 'downloading', downloaded: 0, total: 0, message: line });
+    }
+  };
+
   // First attempt: package may already be in default repos (e.g. pg-15 on Debian Bookworm).
-  let res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`]);
+  let res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`], 600_000, forwardLine);
 
   if (!res.ok) {
     // Package not found — set up the PGDG repository and retry.
@@ -205,7 +226,7 @@ async function installViaApt(
       message: 'Adding PostgreSQL PGDG apt repository…' });
 
     // Ensure prerequisites are available.
-    await run('apt-get', ['install', ...APT_NONINTERACTIVE, 'curl', 'ca-certificates', 'gnupg', 'lsb-release']);
+    await run('apt-get', ['install', ...APT_NONINTERACTIVE, 'curl', 'ca-certificates', 'gnupg', 'lsb-release'], 120_000, forwardLine);
 
     // Import the PGDG GPG signing key. `gpg --batch --yes` makes overwrite
     // non-interactive — without it, gpg blocks forever asking the user to
@@ -245,7 +266,7 @@ async function installViaApt(
 
     // Refresh package lists.
     onProgress({ phase: 'downloading', downloaded: 0, total: 0, message: 'Running apt-get update…' });
-    const upd = await run('apt-get', ['update', '-qq'], 180_000);
+    const upd = await run('apt-get', ['update', '-qq'], 180_000, forwardLine);
     if (!upd.ok) {
       return { ok: false, message: `apt-get update failed:\n${upd.out.slice(0, 400)}` };
     }
@@ -253,7 +274,7 @@ async function installViaApt(
     // Install the requested version.
     onProgress({ phase: 'extracting', downloaded: 0, total: 0,
       message: `Installing postgresql-${release.major}…` });
-    res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`], 600_000);
+    res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`], 600_000, forwardLine);
     if (!res.ok) {
       return { ok: false, message: `apt-get install failed:\n${res.out.slice(0, 400)}` };
     }

@@ -349,6 +349,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
                 <Text color="white">{inst.dataDir}</Text>
               </Box>
             )}
+            {inst.pgVersion && (
+              <Box flexDirection="row">
+                <Text color="gray">{'PG version:'}</Text>
+                <Text color="white">{`  PostgreSQL ${inst.pgVersion}`}</Text>
+              </Box>
+            )}
             {inst.systemdService && (
               <Box flexDirection="row">
                 <Text color="gray">{'Systemd:   '}</Text>

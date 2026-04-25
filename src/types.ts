@@ -53,6 +53,8 @@ export interface Instance {
    * UsersScreen when changeRolePassword is called.
    */
   passwordChangedAt?: string;
+  /** PostgreSQL version used to initialise this instance, e.g. "17.4". Set at creation time. */
+  pgVersion?: string;
 }
 
 export interface DatabaseInfo {

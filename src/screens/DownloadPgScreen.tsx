@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
-import Spinner from 'ink-spinner';
 import { Keybindings } from '../components/Keybindings';
 import {
   PG_RELEASES,
@@ -30,6 +29,18 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
   const poppedRef = useRef(false);
   const isLinux = process.platform === 'linux';
 
+  // Slow-tick spinner (1s interval). ink-spinner updates every ~80ms which
+  // causes ~12 full Ink re-renders/second over SSH — enough to cause heavy
+  // terminal flicker. A 1s interval reduces that to 1 re-render/s.
+  const [spinTick, setSpinTick] = useState(0);
+  useEffect(() => {
+    if (phase !== 'downloading') return;
+    const t = setInterval(() => setSpinTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [phase]);
+  const SPIN_CHARS = ['⠙', '⠸', '⠴', '⠦', '⠇', '⠋'];
+  const spinChar = SPIN_CHARS[spinTick % SPIN_CHARS.length] ?? '⠙';
+
   // Check which majors are already installed
   const [installedMajors, setInstalledMajors] = useState<Set<number>>(new Set());
 
@@ -57,11 +68,17 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       if (p === 'downloading') {
         setDownloaded(d);
         setTotal(t);
-        setMessage(t > 0
-          ? `Downloading…  ${humanBytes(d)} / ${humanBytes(t)}`
-          : `Downloading…  ${humanBytes(d)}`);
+        // On Linux, apt streams lines via `message` (d and t stay 0).
+        // Show those lines as status feedback instead of "Downloading… 0 B".
+        if (m && d === 0 && t === 0) {
+          setMessage(m);
+        } else {
+          setMessage(t > 0
+            ? `Downloading…  ${humanBytes(d)} / ${humanBytes(t)}`
+            : `Downloading…  ${humanBytes(d)}`);
+        }
       } else if (p === 'extracting') {
-        setMessage('Extracting archive…');
+        setMessage(m ?? 'Extracting archive…');
       } else if (p === 'done') {
         setMessage(m ?? 'Done');
         setPhase('done');
@@ -215,11 +232,11 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
         </Box>
       )}
 
-      {/* Downloading */}
+      {/* Downloading / apt-installing */}
       {phase === 'downloading' && (
         <Box borderStyle="round" borderColor="cyan" paddingX={2} marginBottom={1} flexDirection="column">
           <Box flexDirection="row">
-            <Text color="cyan"><Spinner type="dots" /></Text>
+            <Text color="cyan">{spinChar}</Text>
             <Text color="cyan" bold>{`  ${isLinux ? 'Installing' : 'Downloading'} PostgreSQL ${selectedRelease.patch}`}</Text>
           </Box>
           <Box marginTop={1}>
