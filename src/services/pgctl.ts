@@ -307,9 +307,26 @@ export async function startInstance(
     try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* ignore if can't create */ }
     const binDir    = path.dirname(pgCtlBin);
     const extraPath = windowsDllDirs(pgCtlBin);
+
+    // Build the postgres `-o` argument string. On Linux, Debian/PGDG initdb
+    // bakes `unix_socket_directories = '/var/run/postgresql'` into the
+    // generated postgresql.conf — that directory is owned by the system
+    // `postgres` user, so any other user gets EACCES creating the
+    // `.s.PGSQL.<port>.lock` file at startup. We override the setting here
+    // to a user-owned directory so the unprivileged caller can always start
+    // their own instance. The data dir itself is guaranteed writable.
+    let pgOpts = `-p ${instance.port}`;
+    if (process.platform !== 'win32') {
+      const socketDir = path.join(instance.dataDir, 'sockets');
+      try { fs.mkdirSync(socketDir, { recursive: true, mode: 0o700 }); } catch { /* ignore */ }
+      // Quote the path in case it contains spaces; postgres parses -c values
+      // through its own option parser which honours single quotes.
+      pgOpts += ` -c unix_socket_directories='${socketDir}'`;
+    }
+
     const result = await pgCtlRun(
       pgCtlBin,
-      ['start', '-D', instance.dataDir, '-o', `-p ${instance.port}`, '-l', logFile, '-w', '-t', '30'],
+      ['start', '-D', instance.dataDir, '-o', pgOpts, '-l', logFile, '-w', '-t', '30'],
       onLine,
       { cwd: binDir, extraPath },
     );

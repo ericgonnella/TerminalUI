@@ -48,9 +48,14 @@ async function main(): Promise<void> {
 
   // --- Alternate screen buffer ---------------------------------------------
   // Enter the terminal's alternate screen buffer so the TUI owns the whole
-  // viewport and never mixes with scrollback. On exit (or any resize), we
-  // also issue a full-screen clear so Ink's line-based diff can never
-  // under-clear and leave ghost frames when the terminal is resized.
+  // viewport and never mixes with scrollback. We do NOT manually clear the
+  // screen on resize: Ink v3 already subscribes to `process.stdout.resize`
+  // internally and re-renders the entire tree, and writing our own
+  // `\x1b[2J\x1b[H` in addition causes a visible flash on every resize
+  // event — including the spurious resize events some terminals (notably
+  // SSH-attached PuTTY/MobaXterm/Windows Terminal over slow links) emit
+  // while a child process is producing output. The result was severe
+  // flickering of the keybindings strip and the instance table.
   const ENTER_ALT = '\x1b[?1049h';
   const LEAVE_ALT = '\x1b[?1049l';
   const CLEAR_ALL = '\x1b[2J\x1b[H';
@@ -68,15 +73,6 @@ async function main(): Promise<void> {
   process.on('exit',    restoreScreen);
   process.on('SIGINT',  () => { restoreScreen(); process.exit(130); });
   process.on('SIGTERM', () => { restoreScreen(); process.exit(143); });
-
-  // On resize, wipe the whole screen before Ink's next diff frame runs.
-  // This prevents the classic Ink ghost-frame artifact where the previous
-  // frame's wrapped lines leak into scrollback.
-  if (isTTY) {
-    process.stdout.on('resize', () => {
-      process.stdout.write(CLEAR_ALL);
-    });
-  }
 
   const { waitUntilExit } = render(
     <App pgCtlBin={pg.pgCtl} initdbBin={pg.initdb} />,

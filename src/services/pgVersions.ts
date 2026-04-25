@@ -18,6 +18,7 @@ import * as path    from 'path';
 import * as os      from 'os';
 import * as https   from 'https';
 import * as http    from 'http';
+import { spawn }    from 'child_process';
 import AdmZip       from 'adm-zip';
 
 // ─── Version catalog ──────────────────────────────────────────────────────────
@@ -105,32 +106,98 @@ export type ProgressCallback = (opts: {
  * Linux-only: install PostgreSQL via apt-get.
  * Automatically adds the PGDG repository if the requested major version is not
  * available in the distribution's default apt sources.
+ *
+ * IMPORTANT: every external command is run via async `spawn` (NOT spawnSync)
+ * so the Node event loop — and therefore the Ink renderer — keeps ticking
+ * while apt is busy. spawnSync would block for minutes, freezing the UI and
+ * making the terminal appear hung. We also force fully non-interactive mode
+ * (DEBIAN_FRONTEND=noninteractive, dpkg force-confold, gpg --batch --yes)
+ * so dpkg/gpg never prompt for overwrite confirmations from a pipe stdin.
  */
 async function installViaApt(
   release:    PgRelease,
   onProgress: ProgressCallback,
 ): Promise<{ ok: boolean; message: string }> {
-  const { spawnSync } = await import('child_process');
+
+  /** Async wrapper around `spawn`. Streams stderr+stdout into `tail`, returns
+   *  exit code (or non-zero on signal/error). Always inherits a non-interactive
+   *  env so dpkg/apt/gpg never block waiting on a TTY prompt. */
+  function spawnCollect(
+    cmd:     string,
+    args:    string[],
+    timeout = 600_000,
+  ): Promise<{ code: number; out: string }> {
+    return new Promise(resolve => {
+      let settled = false;
+      let out     = '';
+      const env = {
+        ...process.env,
+        DEBIAN_FRONTEND: 'noninteractive',
+        // Suppress dialog/readline-based prompts.
+        DEBCONF_NONINTERACTIVE_SEEN: 'true',
+        APT_LISTCHANGES_FRONTEND:    'none',
+        NEEDRESTART_MODE:            'a',
+      };
+      let proc;
+      try {
+        proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+      } catch (err: any) {
+        resolve({ code: 1, out: err?.message ?? 'spawn failed' });
+        return;
+      }
+      const handle = (b: Buffer) => { out += b.toString(); };
+      proc.stdout?.on('data', handle);
+      proc.stderr?.on('data', handle);
+      const timer = setTimeout(() => {
+        if (settled) return;
+        try { proc.kill('SIGTERM'); } catch { /* ignore */ }
+        // Give it a beat, then SIGKILL.
+        setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 2000);
+      }, timeout);
+      proc.on('error', err => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code: 1, out: out + (err?.message ?? '') });
+      });
+      proc.on('exit', code => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code: code ?? 1, out });
+      });
+    });
+  }
 
   /** Run a command; if it fails with a permission error, transparently retry with sudo. */
-  function run(cmd: string, args: string[], timeout = 180_000): { ok: boolean; out: string } {
-    let r = spawnSync(cmd, args, { stdio: 'pipe', timeout });
-    if (r.status === 0) return { ok: true, out: '' };
-    const stderr = r.stderr?.toString() ?? '';
+  async function run(cmd: string, args: string[], timeout = 600_000): Promise<{ ok: boolean; out: string }> {
+    let r = await spawnCollect(cmd, args, timeout);
+    if (r.code === 0) return { ok: true, out: r.out };
+    const stderr = r.out;
     if (
       stderr.includes('Permission denied') || stderr.includes('must be root') ||
-      stderr.includes('EACCES')            || stderr.includes('superuser')
+      stderr.includes('EACCES')            || stderr.includes('superuser') ||
+      stderr.includes('are you root')      || stderr.includes('not permitted')
     ) {
-      r = spawnSync('sudo', [cmd, ...args], { stdio: 'pipe', timeout });
+      // Use `-n` so sudo never prompts for a password from a pipe (which would
+      // hang forever). The user must have NOPASSWD or a cached credential.
+      r = await spawnCollect('sudo', ['-n', cmd, ...args], timeout);
     }
-    return { ok: r.status === 0, out: r.stderr?.toString().trim() ?? '' };
+    return { ok: r.code === 0, out: r.out.trim() };
   }
+
+  /** dpkg-friendly apt-get options for fully non-interactive runs. */
+  const APT_NONINTERACTIVE = [
+    '-y', '-q',
+    '-o', 'Dpkg::Options::=--force-confdef',
+    '-o', 'Dpkg::Options::=--force-confold',
+  ];
 
   onProgress({ phase: 'downloading', downloaded: 0, total: 0,
     message: `Installing postgresql-${release.major} via apt-get…` });
 
   // First attempt: package may already be in default repos (e.g. pg-15 on Debian Bookworm).
-  let res = run('apt-get', ['install', '-y', `postgresql-${release.major}`]);
+  let res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`]);
 
   if (!res.ok) {
     // Package not found — set up the PGDG repository and retry.
@@ -138,21 +205,26 @@ async function installViaApt(
       message: 'Adding PostgreSQL PGDG apt repository…' });
 
     // Ensure prerequisites are available.
-    run('apt-get', ['install', '-y', 'curl', 'ca-certificates', 'gnupg', 'lsb-release']);
+    await run('apt-get', ['install', ...APT_NONINTERACTIVE, 'curl', 'ca-certificates', 'gnupg', 'lsb-release']);
 
-    // Import the PGDG GPG signing key (pipe via bash; all strings are hardcoded, no user input).
+    // Import the PGDG GPG signing key. `gpg --batch --yes` makes overwrite
+    // non-interactive — without it, gpg blocks forever asking the user to
+    // confirm overwriting an existing keyring file.
     const keyDest = '/etc/apt/trusted.gpg.d/postgresql.gpg';
     const keyCmd =
-      `curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o ${keyDest}` +
-      ` || curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o ${keyDest}`;
-    const keyR = spawnSync('bash', ['-c', keyCmd], { stdio: 'pipe', timeout: 30_000 });
-    if (keyR.status !== 0) {
-      return { ok: false, message: `Failed to import PGDG apt key:\n${keyR.stderr?.toString().slice(0, 300)}` };
+      `set -e; ` +
+      `curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc ` +
+      `| gpg --batch --yes --dearmor -o ${keyDest} ` +
+      `|| (curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc ` +
+      `   | sudo -n gpg --batch --yes --dearmor -o ${keyDest})`;
+    const keyR = await spawnCollect('bash', ['-c', keyCmd], 60_000);
+    if (keyR.code !== 0) {
+      return { ok: false, message: `Failed to import PGDG apt key:\n${keyR.out.slice(0, 400)}` };
     }
 
     // Detect the distro codename (e.g. "bookworm") for the repo line.
-    const lsb = spawnSync('lsb_release', ['-cs'], { stdio: 'pipe', timeout: 5_000 });
-    const codename = lsb.status === 0 ? lsb.stdout.toString().trim() : 'bookworm';
+    const lsb = await spawnCollect('lsb_release', ['-cs'], 5_000);
+    const codename = lsb.code === 0 ? lsb.out.trim() : 'bookworm';
 
     // Write the PGDG sources.list entry.
     const repoLine = `deb https://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main`;
@@ -161,29 +233,29 @@ async function installViaApt(
       fs.writeFileSync(repoFile, repoLine + '\n');
     } catch {
       // Likely a permission error — write via sudo tee.
-      const r2 = spawnSync(
+      const r2 = await spawnCollect(
         'bash',
-        ['-c', `printf '%s\\n' '${repoLine}' | sudo tee ${repoFile} > /dev/null`],
-        { stdio: 'pipe', timeout: 10_000 },
+        ['-c', `printf '%s\\n' '${repoLine}' | sudo -n tee ${repoFile} > /dev/null`],
+        15_000,
       );
-      if (r2.status !== 0) {
-        return { ok: false, message: 'Failed to write PGDG repository list. Run pgmanager as root or grant sudo.' };
+      if (r2.code !== 0) {
+        return { ok: false, message: 'Failed to write PGDG repository list. Run pgmanager as root or grant passwordless sudo.' };
       }
     }
 
     // Refresh package lists.
     onProgress({ phase: 'downloading', downloaded: 0, total: 0, message: 'Running apt-get update…' });
-    const upd = run('apt-get', ['update', '-qq'], 120_000);
+    const upd = await run('apt-get', ['update', '-qq'], 180_000);
     if (!upd.ok) {
-      return { ok: false, message: `apt-get update failed:\n${upd.out.slice(0, 300)}` };
+      return { ok: false, message: `apt-get update failed:\n${upd.out.slice(0, 400)}` };
     }
 
     // Install the requested version.
     onProgress({ phase: 'extracting', downloaded: 0, total: 0,
       message: `Installing postgresql-${release.major}…` });
-    res = run('apt-get', ['install', '-y', `postgresql-${release.major}`], 300_000);
+    res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`], 600_000);
     if (!res.ok) {
-      return { ok: false, message: `apt-get install failed:\n${res.out.slice(0, 300)}` };
+      return { ok: false, message: `apt-get install failed:\n${res.out.slice(0, 400)}` };
     }
   }
 

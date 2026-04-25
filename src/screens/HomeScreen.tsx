@@ -74,7 +74,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
     const entries = await Promise.all(
       list.map(async i => [i.id, await getInstanceStatus(pgCtlBin, i)] as const),
     );
-    setStatuses(Object.fromEntries(entries));
+    const next = Object.fromEntries(entries);
+    // Only update React state when something actually changed. Allocating a
+    // new object every 3s would trigger a full re-render of the home tree
+    // (instance table + activity log + keybindings strip), which is the
+    // primary visible flicker source over SSH/VPS sessions.
+    setStatuses(prev => {
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (prevKeys.length !== nextKeys.length) return next;
+      for (const k of nextKeys) {
+        if (prev[k] !== next[k]) return next;
+      }
+      return prev;
+    });
   }, [list, pgCtlBin]);
 
   useEffect(() => {
