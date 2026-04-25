@@ -208,6 +208,26 @@ async function installViaApt(
   onProgress({ phase: 'downloading', downloaded: 0, total: 0,
     message: `Installing postgresql-${release.major} via apt-get…` });
 
+  // Helper: emit an error phase to the UI before bailing out, otherwise the
+  // DownloadPgScreen would stay stuck on the last "downloading" message.
+  const fail = (message: string): { ok: false; message: string } => {
+    onProgress({ phase: 'error', downloaded: 0, total: 0, message });
+    return { ok: false, message };
+  };
+
+  // Sanity check: must be able to write to /etc/apt as root, or have sudo -n.
+  // If we can't, every subsequent apt step would fail silently. Surface this
+  // up-front so the user knows immediately what to fix.
+  if (process.getuid && process.getuid() !== 0) {
+    const sudoCheck = await spawnCollect('sudo', ['-n', 'true'], 5_000);
+    if (sudoCheck.code !== 0) {
+      return fail(
+        'pgmanager must be run as root or by a user with passwordless sudo (NOPASSWD).\n' +
+        'Try:  sudo pgmanager   — or add yourself to /etc/sudoers.d/ with NOPASSWD: ALL'
+      );
+    }
+  }
+
   // Throttle apt output lines to the UI: max one progress update every 300ms.
   // Without throttling, a verbose apt run emits hundreds of lines/second which
   // would trigger hundreds of Ink re-renders and cause extreme terminal flicker.
@@ -247,7 +267,7 @@ async function installViaApt(
       `   | sudo -n gpg --batch --yes --dearmor -o ${keyDest})`;
     const keyR = await spawnCollect('bash', ['-c', keyCmd], 60_000, forwardLine);
     if (keyR.code !== 0) {
-      return { ok: false, message: `Failed to import PGDG apt key:\n${keyR.out.slice(0, 400)}` };
+      return fail(`Failed to import PGDG apt key:\n${keyR.out.slice(0, 400)}`);
     }
 
     // Detect the distro codename (e.g. "bookworm") for the repo line.
@@ -269,7 +289,7 @@ async function installViaApt(
         15_000,
       );
       if (r2.code !== 0) {
-        return { ok: false, message: 'Failed to write PGDG repository list. Run pgmanager as root or grant passwordless sudo.' };
+        return fail('Failed to write PGDG repository list. Run pgmanager as root or grant passwordless sudo.');
       }
     }
 
@@ -277,7 +297,7 @@ async function installViaApt(
     onProgress({ phase: 'downloading', downloaded: 0, total: 0, message: 'Running apt-get update…' });
     const upd = await run('apt-get', ['update', '-qq'], 180_000, forwardLine);
     if (!upd.ok) {
-      return { ok: false, message: `apt-get update failed:\n${upd.out.slice(0, 400)}` };
+      return fail(`apt-get update failed:\n${upd.out.slice(0, 400)}`);
     }
 
     // Install the requested version.
@@ -285,14 +305,13 @@ async function installViaApt(
       message: `Installing postgresql-${release.major}…` });
     res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`], 600_000, forwardLine);
     if (!res.ok) {
-      return { ok: false, message: `apt-get install failed:\n${res.out.slice(0, 400)}` };
+      return fail(`apt-get install failed:\n${res.out.slice(0, 400)}`);
     }
   }
 
   const binDir = aptBinDir(release.major);
   if (!binDir) {
-    return { ok: false,
-      message: `Package installed but binaries not found at /usr/lib/postgresql/${release.major}/bin` };
+    return fail(`Package installed but binaries not found at /usr/lib/postgresql/${release.major}/bin`);
   }
 
   onProgress({ phase: 'done', downloaded: 0, total: 0,

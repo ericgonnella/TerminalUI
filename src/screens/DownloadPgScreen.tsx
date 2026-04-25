@@ -91,7 +91,14 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       }
     };
 
-    await downloadVersion(release, onProgress);
+    const result = await downloadVersion(release, onProgress);
+    // Safety net: if downloadVersion returned an error but never emitted an
+    // 'error' phase, force the UI out of the busy state so the user is never
+    // left staring at a frozen progress message.
+    if (!result.ok) {
+      setPhase(prev => (prev === 'downloading' || prev === 'extracting') ? 'error' : prev);
+      setMessage(prev => prev || result.message || 'Install failed');
+    }
   }, [refreshInstalled, onInstalled]);
 
   const doRemove = useCallback((release: PgRelease) => {
