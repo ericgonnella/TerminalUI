@@ -7,6 +7,25 @@ import { loadConfig, upsertInstance } from './services/config';
 import { App } from './App';
 
 async function main(): Promise<void> {
+  // When run via `sudo` on Linux/macOS, patch HOME to the real user's home
+  // directory. sudo resets HOME to /root, which breaks PostgreSQL tools that
+  // read it for socket paths — and PG binaries refuse to start as uid 0 anyway.
+  if (process.platform !== 'win32' && process.getuid?.() === 0) {
+    const sudoUser = process.env.SUDO_USER;
+    if (sudoUser && sudoUser !== 'root') {
+      try {
+        const passwdLine = require('fs')
+          .readFileSync('/etc/passwd', 'utf8')
+          .split('\n')
+          .find((l: string) => l.startsWith(sudoUser + ':'));
+        if (passwdLine) {
+          const home = (passwdLine as string).split(':')[5]?.trim();
+          if (home && home !== '/root') process.env.HOME = home;
+        }
+      } catch { /* ignore — /etc/passwd unreadable */ }
+    }
+  }
+
   const pg = await detectPostgres();
 
   if (!pg) {

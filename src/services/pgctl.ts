@@ -6,6 +6,73 @@ import * as path    from 'path';
 import { randomBytes } from 'crypto';
 import type { Instance, InstanceStatus } from '../types';
 
+// ─── Non-root credential resolution ─────────────────────────────────────────
+
+interface UserCreds {
+  uid:  number;
+  gid:  number;
+  home: string;
+}
+
+/**
+ * When pgmanager is launched with `sudo`, resolve the real (non-root) user's
+ * uid/gid/home so we can drop privileges when spawning PostgreSQL binaries.
+ * PostgreSQL flatly refuses to start as uid 0.
+ *
+ * Resolution order:
+ *   1. SUDO_USER  env var → look up in /etc/passwd by name
+ *   2. PKEXEC_UID env var → look up in /etc/passwd by uid
+ *   3. 'postgres' system user in /etc/passwd
+ *
+ * Returns null on Windows or when not running as root.
+ */
+function resolveNonRootCreds(): UserCreds | null {
+  if (process.platform === 'win32') return null;
+  if (process.getuid?.() !== 0) return null;         // not root — no-op
+
+  let passwd: string;
+  try {
+    passwd = fs.readFileSync('/etc/passwd', 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = passwd.split('\n');
+
+  const findByName = (name: string): UserCreds | null => {
+    const line = lines.find(l => l.startsWith(name + ':'));
+    if (!line) return null;
+    const parts = line.split(':');
+    const uid  = parseInt(parts[2], 10);
+    const gid  = parseInt(parts[3], 10);
+    const home = parts[5]?.trim() ?? '';
+    if (isNaN(uid) || isNaN(gid) || !home) return null;
+    if (uid === 0) return null;   // refuse to use root even if SUDO_USER=root
+    return { uid, gid, home };
+  };
+
+  const findByUid = (uidStr: string): UserCreds | null => {
+    const targetUid = parseInt(uidStr, 10);
+    if (isNaN(targetUid) || targetUid === 0) return null;
+    const line = lines.find(l => parseInt(l.split(':')[2], 10) === targetUid);
+    if (!line) return null;
+    const parts = line.split(':');
+    const gid  = parseInt(parts[3], 10);
+    const home = parts[5]?.trim() ?? '';
+    if (isNaN(gid) || !home) return null;
+    return { uid: targetUid, gid, home };
+  };
+
+  if (process.env.SUDO_USER) {
+    const c = findByName(process.env.SUDO_USER);
+    if (c) return c;
+  }
+  if (process.env.PKEXEC_UID) {
+    const c = findByUid(process.env.PKEXEC_UID);
+    if (c) return c;
+  }
+  return findByName('postgres');
+}
+
 // ─── Windows service helpers ──────────────────────────────────────────────────
 
 /** Start or stop a named Windows service via `net start/stop`. */
@@ -94,16 +161,23 @@ export interface PgCtlResult {
 
 interface SpawnOpts {
   /** Working directory. On Windows we use the PG bin dir so DLLs resolve. */
-  cwd?:    string;
+  cwd?:       string;
   /** Extra directories to prepend to PATH for DLL/search resolution. */
   extraPath?: string[];
+  /** Drop to this uid/gid when spawning (Linux only, requires current uid=0). */
+  dropUid?:   number;
+  dropGid?:   number;
+  /** Override HOME in the child environment. */
+  dropHome?:  string;
 }
 
-function buildChildEnv(extraPath: string[] = []): NodeJS.ProcessEnv {
+function buildChildEnv(extraPath: string[] = [], dropHome?: string): NodeJS.ProcessEnv {
   const sep = process.platform === 'win32' ? ';' : ':';
   const existing = process.env.PATH ?? '';
   const prefix = extraPath.filter(Boolean).join(sep);
-  return { ...process.env, PATH: prefix ? `${prefix}${sep}${existing}` : existing };
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: prefix ? `${prefix}${sep}${existing}` : existing };
+  if (dropHome) env.HOME = dropHome;
+  return env;
 }
 
 /** Stream lines from a spawned process, calling onLine for each, returns exit code */
@@ -122,7 +196,9 @@ function spawnLines(
       proc = spawn(bin, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd:   opts.cwd,
-        env:   buildChildEnv(opts.extraPath),
+        env:   buildChildEnv(opts.extraPath, opts.dropHome),
+        ...(opts.dropUid != null ? { uid: opts.dropUid } : {}),
+        ...(opts.dropGid != null ? { gid: opts.dropGid } : {}),
       });
     } catch (err: any) {
       onLine(`Failed to start process: ${err.message}`);
@@ -225,12 +301,21 @@ export async function initDb(
     return { ok: false, output: msg };
   }
 
+  // On Linux, if running as root (via sudo), drop privileges for all PG spawns.
+  // PostgreSQL refuses to run as uid 0.
+  const creds = resolveNonRootCreds();
+  if (creds) {
+    try { fs.chownSync(parentDir, creds.uid, creds.gid); } catch { /* best-effort */ }
+    onLine?.(`Dropping to uid=${creds.uid} gid=${creds.gid} (${process.env.SUDO_USER ?? 'postgres'}) for PG binaries`);
+  }
+  const spawnCreds = creds ? { dropUid: creds.uid, dropGid: creds.gid, dropHome: creds.home } : {};
+
   const binDir    = path.dirname(initdbBin);
   const extraPath = windowsDllDirs(initdbBin);
 
   // Health preflight: make sure initdb can even load its DLLs.
   onLine?.(`Checking initdb is runnable...`);
-  const health = await pgCtlRun(initdbBin, ['--version'], undefined, { cwd: binDir, extraPath });
+  const health = await pgCtlRun(initdbBin, ['--version'], undefined, { cwd: binDir, extraPath, ...spawnCreds });
   if (!health.ok) {
     onLine?.(`Pre-flight failed: ${health.output}`);
     return { ok: false, output: `Cannot run initdb:\n${health.output}` };
@@ -266,7 +351,7 @@ export async function initDb(
   if (extraPath.length) onLine?.(`DLL search dirs: ${extraPath.join(' | ')}`);
 
   try {
-    return await pgCtlRun(initdbBin, args, onLine, { cwd: binDir, extraPath });
+    return await pgCtlRun(initdbBin, args, onLine, { cwd: binDir, extraPath, ...spawnCreds });
   } finally {
     if (pwFile) {
       try { fs.unlinkSync(pwFile); } catch { /* ignore */ }
@@ -306,6 +391,14 @@ export async function startInstance(
     const logFile = path.join(logDir, 'startup.log');
     try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* ignore if can't create */ }
 
+    // Drop privileges for PG binaries when running as root (sudo scenario).
+    const creds = resolveNonRootCreds();
+    if (creds) {
+      try { fs.chownSync(logDir, creds.uid, creds.gid); } catch { /* best-effort */ }
+      onLine?.(`Dropping to uid=${creds.uid} gid=${creds.gid} (${process.env.SUDO_USER ?? 'postgres'}) for PG binaries`);
+    }
+    const spawnCreds = creds ? { dropUid: creds.uid, dropGid: creds.gid, dropHome: creds.home } : {};
+
     // On Windows, an unclean previous shutdown (e.g. Ctrl+C → 0xC000013A)
     // can leave pg_log/startup.log locked. PostgreSQL's startup logger then
     // gets a "sharing violation" opening the file, which aborts startup. Deleting
@@ -331,13 +424,16 @@ export async function startInstance(
       // Quote the path in case it contains spaces; postgres parses -c values
       // through its own option parser which honours single quotes.
       pgOpts += ` -c unix_socket_directories='${socketDir}'`;
+      if (creds) {
+        try { fs.chownSync(socketDir, creds.uid, creds.gid); } catch { /* best-effort */ }
+      }
     }
 
     const result = await pgCtlRun(
       pgCtlBin,
       ['start', '-D', instance.dataDir, '-o', pgOpts, '-l', logFile, '-w', '-t', '30'],
       onLine,
-      { cwd: binDir, extraPath },
+      { cwd: binDir, extraPath, ...spawnCreds },
     );
 
     // On failure, pg_ctl's own stdout is terse ("could not start server —
@@ -393,11 +489,13 @@ export async function stopInstance(
   if (pgCtlBin) {
     const binDir    = path.dirname(pgCtlBin);
     const extraPath = windowsDllDirs(pgCtlBin);
+    const creds     = resolveNonRootCreds();
+    const spawnCreds = creds ? { dropUid: creds.uid, dropGid: creds.gid, dropHome: creds.home } : {};
     return pgCtlRun(
       pgCtlBin,
       ['stop', '-D', instance.dataDir, '-m', 'fast'],
       onLine,
-      { cwd: binDir, extraPath },
+      { cwd: binDir, extraPath, ...spawnCreds },
     );
   }
 
