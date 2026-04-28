@@ -102,6 +102,21 @@ export type ProgressCallback = (opts: {
   message?:   string;
 }) => void;
 
+function cleanTerminalStatus(input: string): string {
+  return input
+    // Strip ANSI / CSI escape sequences before React Ink writes the text.
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+    // apt and dpkg often redraw progress with carriage returns. Preserve only
+    // the newest segment so it cannot move the terminal cursor when rendered.
+    .split(/\r+/)
+    .pop()!
+    // Drop remaining C0 controls except tab, then keep status text bounded.
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+}
+
 /**
  * Linux-only: install PostgreSQL via apt-get.
  * Automatically adds the PGDG repository if the requested major version is not
@@ -110,121 +125,222 @@ export type ProgressCallback = (opts: {
  * IMPORTANT: every external command is run via async `spawn` (NOT spawnSync)
  * so the Node event loop — and therefore the Ink renderer — keeps ticking
  * while apt is busy. spawnSync would block for minutes, freezing the UI and
- * making the terminal appear hung. We also force fully non-interactive mode
- * (DEBIAN_FRONTEND=noninteractive, dpkg force-confold, gpg --batch --yes)
- * so dpkg/gpg never prompt for overwrite confirmations from a pipe stdin.
+ * making the terminal appear hung.
+ *
+ * Non-interactive mode is enforced from MULTIPLE angles, because each one has
+ * a known failure mode on real-world VPS images:
+ *
+ *   1. Environment vars (DEBIAN_FRONTEND, APT_LISTCHANGES_FRONTEND, …) are
+ *      passed BOTH on the spawn-env AND as inline `VAR=val` arguments to sudo
+ *      so they survive sudo's default `env_reset` (the most common cause of
+ *      apt-get hanging at "apt-listchanges: Reading changelogs..." on Ubuntu —
+ *      sudo strips the env, apt-listchanges goes interactive, blocks forever).
+ *   2. apt-get is invoked with `-o` overrides for every interactive knob
+ *      (Dpkg::Use-Pty, DPkg::Pre-Install-Pkgs, lock timeout, etc.) so even if
+ *      the env vars are dropped, apt cannot stop to ask a question.
+ *   3. dpkg state is recovered first (`dpkg --configure -a`, `apt-get -fy
+ *      install`) so a previous interrupted install doesn't wedge every
+ *      subsequent attempt.
+ *   4. The dpkg lock is probed up-front; if held by another process we name
+ *      the holder instead of silently waiting.
+ *   5. Full output is tee'd to `~/.pgmanager/logs/install-pgN-<ts>.log` so the
+ *      user has something concrete to read when the truncated UI message
+ *      isn't enough.
  */
+function installLogPath(major: number): string {
+  const dir = path.join(os.homedir(), '.pgmanager', 'logs');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  return path.join(dir, `install-pg${major}-${ts}.log`);
+}
+
 async function installViaApt(
   release:    PgRelease,
   onProgress: ProgressCallback,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; logPath?: string }> {
 
-  /** Async wrapper around `spawn`. Streams stderr+stdout into `tail`, returns
-   *  exit code (or non-zero on signal/error). Always inherits a non-interactive
-   *  env so dpkg/apt/gpg never block waiting on a TTY prompt.
-   *  onLine is called for every output line, allowing the caller to forward
-   *  progress to the UI without blocking Node's event loop. */
+  const logPath = installLogPath(release.major);
+  let logStream: fs.WriteStream | null = null;
+  try { logStream = fs.createWriteStream(logPath, { flags: 'a' }); } catch { /* ignore */ }
+  const logRaw = (text: string): void => {
+    try { logStream?.write(text); } catch { /* ignore */ }
+  };
+  const logLine = (line: string): void => logRaw(`[${new Date().toISOString()}] ${line}\n`);
+  logLine(`pgmanager install start: postgresql-${release.major} (${release.patch})`);
+  logLine(`uid=${process.getuid?.() ?? '?'} platform=${process.platform} cwd=${process.cwd()}`);
+
+  /** Env vars that MUST reach apt/dpkg/gpg. Set both in spawn-env and passed
+   *  to sudo as inline VAR=val args (sudo's env_reset strips spawn-env). */
+  const NONINTERACTIVE_ENV: Record<string, string> = {
+    DEBIAN_FRONTEND:             'noninteractive',
+    DEBCONF_NONINTERACTIVE_SEEN: 'true',
+    APT_LISTCHANGES_FRONTEND:    'none',
+    APT_LISTBUGS_FRONTEND:       'none',
+    NEEDRESTART_MODE:            'a',
+    NEEDRESTART_SUSPEND:         '1',
+    TERM:                        'dumb',
+    NO_COLOR:                    '1',
+    APT_PROGRESS_FANCY:          '0',
+    LC_ALL:                      'C.UTF-8',
+    LANG:                        'C.UTF-8',
+  };
+
+  /** Async wrapper around `spawn`. Streams stderr+stdout into `out`, mirrors
+   *  every line to the install log, and resolves with exit code. */
   function spawnCollect(
     cmd:     string,
     args:    string[],
     timeout = 600_000,
     onLine?: (line: string) => void,
-  ): Promise<{ code: number; out: string }> {
+  ): Promise<{ code: number; out: string; timedOut: boolean }> {
     return new Promise(resolve => {
-      let settled = false;
-      let out     = '';
-      const env = {
-        ...process.env,
-        DEBIAN_FRONTEND: 'noninteractive',
-        // Suppress dialog/readline-based prompts.
-        DEBCONF_NONINTERACTIVE_SEEN: 'true',
-        APT_LISTCHANGES_FRONTEND:    'none',
-        NEEDRESTART_MODE:            'a',
-      };
+      let settled  = false;
+      let timedOut = false;
+      let out      = '';
+      const env = { ...process.env, ...NONINTERACTIVE_ENV };
+      logLine(`exec: ${cmd} ${args.map(a => /\s/.test(a) ? JSON.stringify(a) : a).join(' ')}`);
       let proc;
       try {
         proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
       } catch (err: any) {
-        resolve({ code: 1, out: err?.message ?? 'spawn failed' });
+        const msg = err?.message ?? 'spawn failed';
+        logLine(`spawn-error: ${msg}`);
+        resolve({ code: 1, out: msg, timedOut: false });
         return;
       }
       const handle = (b: Buffer) => {
         const text = b.toString();
         out += text;
+        logRaw(text);
         if (onLine) {
-          text.split(/\r?\n/).filter(Boolean).forEach(onLine);
+          text.split(/[\r\n]+/)
+            .map(cleanTerminalStatus)
+            .filter(Boolean)
+            .forEach(onLine);
         }
       };
       proc.stdout?.on('data', handle);
       proc.stderr?.on('data', handle);
       const timer = setTimeout(() => {
         if (settled) return;
+        timedOut = true;
+        logLine(`timeout after ${timeout}ms — killing pid ${proc.pid}`);
         try { proc.kill('SIGTERM'); } catch { /* ignore */ }
-        // Give it a beat, then SIGKILL.
         setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 2000);
       }, timeout);
       proc.on('error', err => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ code: 1, out: out + (err?.message ?? '') });
+        logLine(`error: ${err?.message ?? 'unknown'}`);
+        resolve({ code: 1, out: out + (err?.message ?? ''), timedOut });
       });
-      proc.on('exit', code => {
+      proc.on('exit', (code, signal) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ code: code ?? 1, out });
+        logLine(`exit: code=${code} signal=${signal ?? '-'} timedOut=${timedOut}`);
+        resolve({ code: code ?? (signal ? 1 : 1), out, timedOut });
       });
     });
   }
 
-  /** Run a command; if it fails with a permission error, transparently retry with sudo. */
-  async function run(cmd: string, args: string[], timeout = 600_000, onLine?: (line: string) => void): Promise<{ ok: boolean; out: string }> {
-    let r = await spawnCollect(cmd, args, timeout, onLine);
-    if (r.code === 0) return { ok: true, out: r.out };
-    const stderr = r.out;
-    if (
-      stderr.includes('Permission denied') || stderr.includes('must be root') ||
-      stderr.includes('EACCES')            || stderr.includes('superuser') ||
-      stderr.includes('are you root')      || stderr.includes('not permitted')
-    ) {
-      // Use `-n` so sudo never prompts for a password from a pipe (which would
-      // hang forever). The user must have NOPASSWD or a cached credential.
-      r = await spawnCollect('sudo', ['-n', cmd, ...args], timeout, onLine);
-    }
-    return { ok: r.code === 0, out: r.out.trim() };
+  const isRoot = process.getuid ? process.getuid() === 0 : false;
+
+  /** Build the argv list for sudo, including inline VAR=val pairs so the
+   *  non-interactive env survives sudo's `env_reset`. */
+  function sudoArgs(cmd: string, args: string[]): string[] {
+    const envPairs = Object.entries(NONINTERACTIVE_ENV).map(([k, v]) => `${k}=${v}`);
+    // -n  never prompt for a password (must have NOPASSWD or cached creds)
+    // -E  preserve env (works on sudoers with appropriate policy; combined
+    //     with explicit VAR=val args we get the strongest guarantee)
+    return ['-n', '-E', ...envPairs, cmd, ...args];
   }
 
-  /** dpkg-friendly apt-get options for fully non-interactive runs. */
+  /** Run a privileged command. If we're already root, run direct.
+   *  Otherwise always go through sudo (we already verified sudo -n works). */
+  async function runPriv(
+    cmd:     string,
+    args:    string[],
+    timeout = 600_000,
+    onLine?: (line: string) => void,
+  ): Promise<{ ok: boolean; out: string; timedOut: boolean }> {
+    const r = isRoot
+      ? await spawnCollect(cmd, args, timeout, onLine)
+      : await spawnCollect('sudo', sudoArgs(cmd, args), timeout, onLine);
+    return { ok: r.code === 0, out: r.out.trim(), timedOut: r.timedOut };
+  }
+
+  /** dpkg-friendly apt-get options for fully non-interactive runs. Each one
+   *  guards against a specific failure mode we've observed in the wild. */
   const APT_NONINTERACTIVE = [
     '-y', '-q',
+    '--no-install-recommends',   // don't pull in postgresql-18 when user wants 17
+    '--no-install-suggests',
+    '-o', 'Dpkg::Use-Pty=0',
+    '-o', 'APT::Color=0',
+    '-o', 'APT::Get::Assume-Yes=true',
     '-o', 'Dpkg::Options::=--force-confdef',
     '-o', 'Dpkg::Options::=--force-confold',
-    // Fail after 60 s rather than waiting forever if another process holds the
-    // dpkg lock (e.g. unattended-upgrades running at boot on Ubuntu VPS).
-    '-o', 'DPkg::Lock::Timeout=60',
+    // Disable apt-listchanges entirely — it's the #1 cause of hangs over SSH
+    // because it tries to invoke a pager that has no controlling TTY.
+    '-o', 'DPkg::Pre-Install-Pkgs::=',
+    '-o', 'Apt::Cmd::Disable-Script-Warning=1',
+    // Fail after 120 s rather than waiting forever if another process holds
+    // the dpkg lock (unattended-upgrades on Ubuntu VPS, etc.).
+    '-o', 'DPkg::Lock::Timeout=120',
+    // Retry HTTP fetches a few times — VPS networking is flaky.
+    '-o', 'Acquire::Retries=3',
   ];
+
+  /** Extract actionable error lines from apt/dpkg output. */
+  function extractAptErrors(out: string): string[] {
+    return out.split('\n')
+      .filter(l => /^\s*(E:|Err:|dpkg: error|dpkg:.*conflict|error processing|unmet dep)/i.test(l))
+      .map(l => l.trim())
+      .filter(Boolean)
+      .slice(-8);
+  }
+
+  /** Emit an error phase to the UI. Log path and E: lines go FIRST so they are
+   *  always visible at the top of the error box — never scrolled off-screen. */
+  const fail = (summary: string, rawOut?: string): { ok: false; message: string; logPath: string } => {
+    const errLines = rawOut ? extractAptErrors(rawOut) : [];
+    const parts: string[] = [
+      `Log: ${logPath}`,
+      '',
+      summary,
+    ];
+    if (errLines.length > 0) {
+      parts.push('');
+      parts.push(...errLines);
+    }
+    const full = parts.join('\n');
+    logLine(`FAIL: ${full}`);
+    onProgress({ phase: 'error', downloaded: 0, total: 0, message: full });
+    try { logStream?.end(); } catch { /* ignore */ }
+    return { ok: false, message: full, logPath };
+  };
 
   onProgress({ phase: 'downloading', downloaded: 0, total: 0,
     message: `Installing postgresql-${release.major} via apt-get…` });
 
-  // Helper: emit an error phase to the UI before bailing out, otherwise the
-  // DownloadPgScreen would stay stuck on the last "downloading" message.
-  const fail = (message: string): { ok: false; message: string } => {
-    onProgress({ phase: 'error', downloaded: 0, total: 0, message });
-    return { ok: false, message };
-  };
-
-  // Sanity check: must be able to write to /etc/apt as root, or have sudo -n.
-  // If we can't, every subsequent apt step would fail silently. Surface this
-  // up-front so the user knows immediately what to fix.
-  if (process.getuid && process.getuid() !== 0) {
+  // ── Step 0: privilege check ───────────────────────────────────────────────
+  // Fail fast with a clear, actionable message if we can't elevate.
+  if (!isRoot) {
     const sudoCheck = await spawnCollect('sudo', ['-n', 'true'], 5_000);
     if (sudoCheck.code !== 0) {
+      // sudo is either missing, requires a password, or this user isn't a sudoer.
+      const binPath = process.argv[1] ?? 'pgmanager';
       return fail(
-        'pgmanager must be run as root or by a user with passwordless sudo (NOPASSWD).\n' +
-        'Try:  sudo pgmanager   — or add yourself to /etc/sudoers.d/ with NOPASSWD: ALL'
-      );
+        'pgmanager needs root privileges to run apt-get, but `sudo -n` is not available.\n' +
+        '\n' +
+        'Pick one:\n' +
+        `  • Re-run with sudo using the FULL path:   sudo "${binPath}"\n` +
+        '  • Or preserve your PATH:                  sudo -E env "PATH=$PATH" pgmanager\n' +
+        '  • Or install pgmanager system-wide:       sudo npm install -g pgmanager\n' +
+        '  • Or grant passwordless sudo to your user (NOPASSWD: ALL in /etc/sudoers.d/).'
+      );  // (no rawOut for this failure — it's a pre-flight check)
     }
   }
 
@@ -240,83 +356,173 @@ async function installViaApt(
     }
   };
 
-  // First attempt: package may already be in default repos (e.g. pg-15 on Debian Bookworm).
-  let res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`], 600_000, forwardLine);
+  // ── Step 1: probe for a held dpkg lock ────────────────────────────────────
+  // unattended-upgrades on fresh Ubuntu VPS images frequently holds this for
+  // 5–15 minutes after first boot. If we don't tell the user, they think
+  // pgmanager is broken.
+  onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+    message: 'Checking dpkg/apt locks…' });
+  const lockProbe = await runPriv(
+    'bash',
+    ['-c',
+      'for f in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock; do ' +
+      '  if command -v fuser >/dev/null 2>&1 && fuser "$f" >/dev/null 2>&1; then ' +
+      '    echo "LOCKED: $f"; ps -o pid,user,comm,args -p $(fuser "$f" 2>/dev/null | tr -s " ") 2>/dev/null || true; ' +
+      '  fi; ' +
+      'done; ' +
+      'true'
+    ],
+    15_000,
+  );
+  if (lockProbe.out.includes('LOCKED:')) {
+    const holder = lockProbe.out.split('\n').slice(0, 6).join('\n');
+    onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+      message: 'dpkg lock held — will wait up to 120 s…' });
+    logLine(`lock held:\n${holder}`);
+    // Don't fail yet — DPkg::Lock::Timeout=120 will give it 2 minutes to
+    // release. If it doesn't, the install command will surface the failure.
+  }
+
+  // ── Step 2: recover from any prior broken dpkg state ──────────────────────
+  // A previous interrupted install (Ctrl-C, network drop, OOM kill) leaves
+  // dpkg in a state where every subsequent install fails with "dpkg was
+  // interrupted". This is exactly the symptom the user reported.
+  onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+    message: 'Recovering dpkg state (dpkg --configure -a)…' });
+  const cfg = await runPriv('dpkg', ['--configure', '-a'], 300_000, forwardLine);
+  if (!cfg.ok) {
+    logLine(`dpkg --configure -a non-zero (continuing): ${cfg.out.slice(-400)}`);
+  }
+  onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+    message: 'Fixing broken packages (apt-get install -fy)…' });
+  const fix = await runPriv('apt-get', ['install', ...APT_NONINTERACTIVE, '-f'], 300_000, forwardLine);
+  if (!fix.ok) {
+    logLine(`apt-get -fy non-zero (continuing): ${fix.out.slice(-400)}`);
+  }
+
+  // ── Step 3: first install attempt (default repos) ─────────────────────────
+  onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+    message: `Trying apt-get install postgresql-${release.major} from default repos…` });
+  let res = await runPriv(
+    'apt-get',
+    ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`],
+    900_000,
+    forwardLine,
+  );
 
   if (!res.ok) {
-    // Package not found — set up the PGDG repository and retry.
+    // Distinguish "package not found" (need PGDG) from real failures (lock
+    // timeout, network, broken deps) so we don't bash on with PGDG when the
+    // real problem is something else.
+    const out = res.out;
+    const notFound =
+      /Unable to locate package/i.test(out) ||
+      /has no installation candidate/i.test(out) ||
+      /Couldn't find any package/i.test(out);
+
+    if (!notFound) {
+      // A real failure — surface it instead of silently wandering off into
+      // PGDG repo setup.
+      if (res.timedOut) {
+        return fail(
+          'apt-get install timed out (15 min). Likely causes:\n' +
+          '  • dpkg lock held by another process (unattended-upgrades, snapd)\n' +
+          '  • slow / blocked network to deb.debian.org',
+          out,
+        );
+      }
+      return fail('apt-get install failed (see E: lines and log above)', out);
+    }
+
+    // ── Step 4: set up the PGDG repo and retry ──────────────────────────────
     onProgress({ phase: 'downloading', downloaded: 0, total: 0,
       message: 'Adding PostgreSQL PGDG apt repository…' });
 
-    // Ensure prerequisites are available.
     onProgress({ phase: 'downloading', downloaded: 0, total: 0,
       message: 'Installing prerequisites (curl, gnupg, lsb-release)…' });
-    await run('apt-get', ['install', ...APT_NONINTERACTIVE, 'curl', 'ca-certificates', 'gnupg', 'lsb-release'], 120_000, forwardLine);
+    const prereq = await runPriv(
+      'apt-get',
+      ['install', ...APT_NONINTERACTIVE, 'curl', 'ca-certificates', 'gnupg', 'lsb-release'],
+      300_000, forwardLine,
+    );
+    if (!prereq.ok) {
+      return fail('Failed to install prerequisites (curl, gnupg, lsb-release)', prereq.out);
+    }
 
-    // Import the PGDG GPG signing key. `gpg --batch --yes` makes overwrite
-    // non-interactive — without it, gpg blocks forever asking the user to
-    // confirm overwriting an existing keyring file.
     onProgress({ phase: 'downloading', downloaded: 0, total: 0,
       message: 'Downloading PostgreSQL signing key from postgresql.org…' });
     const keyDest = '/etc/apt/trusted.gpg.d/postgresql.gpg';
-    const keyCmd =
-      `set -e; ` +
-      `curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc ` +
-      `| gpg --batch --yes --dearmor -o ${keyDest} ` +
-      `|| (curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc ` +
-      `   | sudo -n gpg --batch --yes --dearmor -o ${keyDest})`;
-    const keyR = await spawnCollect('bash', ['-c', keyCmd], 60_000, forwardLine);
-    if (keyR.code !== 0) {
-      return fail(`Failed to import PGDG apt key:\n${keyR.out.slice(0, 400)}`);
+    const keyR = await runPriv(
+      'bash',
+      ['-c',
+        `set -o pipefail; ` +
+        `curl -fsSL --max-time 30 https://www.postgresql.org/media/keys/ACCC4CF8.asc ` +
+        `| gpg --batch --yes --dearmor -o ${keyDest}`
+      ],
+      90_000, forwardLine,
+    );
+    if (!keyR.ok) {
+      return fail('Failed to import PGDG apt key from postgresql.org', keyR.out);
     }
 
     // Detect the distro codename (e.g. "bookworm") for the repo line.
-    const lsb = await spawnCollect('lsb_release', ['-cs'], 5_000);
-    const codename = lsb.code === 0 ? lsb.out.trim() : 'bookworm';
+    const lsb = await spawnCollect('bash',
+      ['-c', 'lsb_release -cs 2>/dev/null || (. /etc/os-release && echo "$VERSION_CODENAME")'],
+      10_000);
+    const codename = lsb.code === 0 ? lsb.out.trim().split('\n').pop()!.trim() : 'bookworm';
+    if (!codename || /\s/.test(codename)) {
+      return fail(`Could not detect distro codename (got: "${codename}"). Run 'lsb_release -cs' to verify.`);
+    }
 
-    // Write the PGDG sources.list entry.
     onProgress({ phase: 'downloading', downloaded: 0, total: 0,
       message: `Writing PGDG repository list for ${codename}…` });
     const repoLine = `deb https://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main`;
     const repoFile = '/etc/apt/sources.list.d/pgdg.list';
-    try {
-      fs.writeFileSync(repoFile, repoLine + '\n');
-    } catch {
-      // Likely a permission error — write via sudo tee.
-      const r2 = await spawnCollect(
-        'bash',
-        ['-c', `printf '%s\\n' '${repoLine}' | sudo -n tee ${repoFile} > /dev/null`],
-        15_000,
-      );
-      if (r2.code !== 0) {
-        return fail('Failed to write PGDG repository list. Run pgmanager as root or grant passwordless sudo.');
-      }
+    const repoR = await runPriv(
+      'bash',
+      ['-c', `printf '%s\\n' ${JSON.stringify(repoLine)} > ${repoFile}`],
+      15_000,
+    );
+    if (!repoR.ok) {
+      return fail(`Failed to write ${repoFile}`, repoR.out);
     }
 
-    // Refresh package lists.
     onProgress({ phase: 'downloading', downloaded: 0, total: 0, message: 'Running apt-get update…' });
-    const upd = await run('apt-get', ['update', '-qq'], 180_000, forwardLine);
+    const upd = await runPriv('apt-get', ['update', ...APT_NONINTERACTIVE.filter(a => a !== '-q')], 300_000, forwardLine);
     if (!upd.ok) {
-      return fail(`apt-get update failed:\n${upd.out.slice(0, 400)}`);
+      return fail('apt-get update failed (PGDG)', upd.out);
     }
 
-    // Install the requested version.
-    onProgress({ phase: 'extracting', downloaded: 0, total: 0,
-      message: `Installing postgresql-${release.major}…` });
-    res = await run('apt-get', ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`], 600_000, forwardLine);
+    onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+      message: `Installing postgresql-${release.major} from PGDG…` });
+    res = await runPriv(
+      'apt-get',
+      ['install', ...APT_NONINTERACTIVE, `postgresql-${release.major}`],
+      900_000, forwardLine,
+    );
     if (!res.ok) {
-      return fail(`apt-get install failed:\n${res.out.slice(0, 400)}`);
+      if (res.timedOut) {
+        return fail(
+          'apt-get install (PGDG) timed out (15 min). Likely causes:\n' +
+          '  • dpkg lock held by another process\n' +
+          '  • slow or blocked network to apt.postgresql.org',
+          res.out,
+        );
+      }
+      return fail('apt-get install (PGDG) failed (see E: lines and log above)', res.out);
     }
   }
 
   const binDir = aptBinDir(release.major);
   if (!binDir) {
-    return fail(`Package installed but binaries not found at /usr/lib/postgresql/${release.major}/bin`);
+    return fail(`Package installed but binaries not found at /usr/lib/postgresql/${release.major}/bin/initdb`);
   }
 
+  logLine(`SUCCESS: binaries at ${binDir}`);
+  try { logStream?.end(); } catch { /* ignore */ }
   onProgress({ phase: 'done', downloaded: 0, total: 0,
-    message: `PostgreSQL ${release.patch} installed via apt` });
-  return { ok: true, message: `PostgreSQL ${release.patch} installed via apt` };
+    message: `PostgreSQL ${release.patch} installed via apt (log: ${logPath})` });
+  return { ok: true, message: `PostgreSQL ${release.patch} installed via apt`, logPath };
 }
 
 /**
@@ -327,7 +533,7 @@ async function installViaApt(
 export async function downloadVersion(
   release:    PgRelease,
   onProgress: ProgressCallback,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; logPath?: string }> {
   // On Linux, use apt-get / PGDG — the EDB binary CDN returns HTTP 403 on Linux.
   if (platform() === 'linux') {
     return installViaApt(release, onProgress);

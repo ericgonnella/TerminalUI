@@ -20,6 +20,31 @@ interface Props {
 
 type Phase = 'select' | 'confirm-download' | 'confirm-remove' | 'downloading' | 'extracting' | 'done' | 'error';
 
+function safeStatus(input: string): string {
+  return input
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+    .split(/\r+/)
+    .pop()!
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+}
+
+/** Like safeStatus but preserves line breaks — used for error messages so a
+ *  multi-line diagnostic ("Full log: …", actionable hints) isn't collapsed. */
+function safeMultilineStatus(input: string): string {
+  return input
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+    .replace(/\r/g, '')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .split('\n')
+    .map(l => l.replace(/[ \t]+/g, ' ').trim())
+    .filter((l, i, arr) => l !== '' || (i > 0 && arr[i - 1] !== ''))
+    .join('\n')
+    .slice(0, 4000);
+}
+
 export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
   const [selected, setSelected] = useState(0);
   const [phase,    setPhase]    = useState<Phase>('select');
@@ -38,8 +63,8 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
     const t = setInterval(() => setSpinTick(n => n + 1), 1000);
     return () => clearInterval(t);
   }, [phase]);
-  const SPIN_CHARS = ['⠙', '⠸', '⠴', '⠦', '⠇', '⠋'];
-  const spinChar = SPIN_CHARS[spinTick % SPIN_CHARS.length] ?? '⠙';
+  const SPIN_CHARS = ['|', '/', '-', '\\'];
+  const spinChar = SPIN_CHARS[spinTick % SPIN_CHARS.length] ?? '|';
 
   // Check which majors are already installed
   const [installedMajors, setInstalledMajors] = useState<Set<number>>(new Set());
@@ -62,7 +87,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
     setPhase('downloading');
     setDownloaded(0);
     setTotal(0);
-    setMessage(`Downloading PostgreSQL ${release.patch}…`);
+    setMessage(`${isLinux ? 'Installing' : 'Downloading'} PostgreSQL ${release.patch}…`);
 
     const onProgress: ProgressCallback = ({ phase: p, downloaded: d, total: t, message: m }) => {
       if (p === 'downloading') {
@@ -71,7 +96,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
         // On Linux, apt streams lines via `message` (d and t stay 0).
         // Show those lines as status feedback instead of "Downloading… 0 B".
         if (m && d === 0 && t === 0) {
-          setMessage(m);
+          setMessage(safeStatus(m));
         } else {
           setMessage(t > 0
             ? `Downloading…  ${humanBytes(d)} / ${humanBytes(t)}`
@@ -79,14 +104,14 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
         }
       } else if (p === 'extracting') {
         setPhase('extracting');
-        setMessage(m ?? 'Extracting archive…');
+        setMessage(safeStatus(m ?? 'Extracting archive…'));
       } else if (p === 'done') {
-        setMessage(m ?? 'Done');
+        setMessage(safeStatus(m ?? 'Done'));
         setPhase('done');
         refreshInstalled();
         onInstalled?.(release.major);
       } else if (p === 'error') {
-        setMessage(m ?? 'Unknown error');
+        setMessage(safeMultilineStatus(m ?? 'Unknown error'));
         setPhase('error');
       }
     };
@@ -97,9 +122,13 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
     // left staring at a frozen progress message.
     if (!result.ok) {
       setPhase(prev => (prev === 'downloading' || prev === 'extracting') ? 'error' : prev);
-      setMessage(prev => prev || result.message || 'Install failed');
+      const tail = result.message || 'Install failed';
+      const withLog = result.logPath && !tail.includes(result.logPath)
+        ? `${tail}\nFull log: ${result.logPath}`
+        : tail;
+      setMessage(prev => prev || withLog);
     }
-  }, [refreshInstalled, onInstalled]);
+  }, [isLinux, refreshInstalled, onInstalled]);
 
   const doRemove = useCallback((release: PgRelease) => {
     removeVersion(release.major);
@@ -156,9 +185,9 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
 
   // ── Progress bar ────────────────────────────────────────────────────────────
   const progressBar = (downloaded: number, total: number, width = 40): string => {
-    if (total === 0) return `[${'░'.repeat(width)}]`;
+    if (total === 0) return `[${'-'.repeat(width)}]`;
     const filled = Math.round((downloaded / total) * width);
-    return `[${'█'.repeat(filled)}${'░'.repeat(width - filled)}]`;
+    return `[${'#'.repeat(filled)}${'-'.repeat(width - filled)}]`;
   };
 
   const pct = total > 0 ? `${Math.round((downloaded / total) * 100)}%` : '';
@@ -247,10 +276,12 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
             <Text color="cyan">{spinChar}</Text>
             <Text color="cyan" bold>{`  ${isLinux ? 'Installing' : 'Downloading'} PostgreSQL ${selectedRelease.patch}`}</Text>
           </Box>
-          <Box marginTop={1}>
-            <Text color="white">{progressBar(downloaded, total)}</Text>
-            <Text color="cyan">{`  ${pct}`}</Text>
-          </Box>
+          {!isLinux && (
+            <Box marginTop={1}>
+              <Text color="white">{progressBar(downloaded, total)}</Text>
+              <Text color="cyan">{`  ${pct}`}</Text>
+            </Box>
+          )}
           <Text color="gray" dimColor>{message}</Text>
         </Box>
       )}
@@ -278,17 +309,33 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       )}
 
       {/* Error */}
-      {phase === 'error' && (
-        <Box borderStyle="round" borderColor="red" paddingX={2} marginBottom={1} flexDirection="column">
-          <Text color="red" bold>{'✗ Installation failed'}</Text>
-          {message.split('\n').filter(Boolean).map((line, i) => (
-            <Text key={i} color="red" dimColor>{line}</Text>
-          ))}
-          <Box marginTop={1}>
-            <Text color="gray">{'Press any key to go back.'}</Text>
+      {phase === 'error' && (() => {
+        // The message is structured: first line is "Log: /path/…", then a blank,
+        // then the summary + E: lines. Separate them for distinct rendering so
+        // the log path is always visible at the top regardless of terminal height.
+        const allLines = message.split('\n');
+        const logLine  = allLines.find(l => l.startsWith('Log: ')) ?? '';
+        const bodyLines = allLines
+          .filter(l => !l.startsWith('Log: '))
+          .filter(Boolean)  // drop blank-only lines left by the filter
+          .slice(0, 10);    // cap at 10 lines — critical info is at the top
+        return (
+          <Box borderStyle="round" borderColor="red" paddingX={2} marginBottom={1} flexDirection="column">
+            <Text color="red" bold>{'✗ Installation failed'}</Text>
+            {logLine ? (
+              <Text color="yellow">{logLine}</Text>
+            ) : null}
+            {bodyLines.map((line, i) => (
+              <Text key={i} color={/^(E:|Err:|dpkg: error|error processing)/i.test(line) ? 'red' : 'red'} dimColor={!/^(E:|Err:|dpkg: error|error processing)/i.test(line)}>
+                {line}
+              </Text>
+            ))}
+            <Box marginTop={1}>
+              <Text color="gray">{'Press any key to go back. Then: cat <log path above> for full output.'}</Text>
+            </Box>
           </Box>
-        </Box>
-      )}
+        );
+      })()}
 
       {phase === 'select' && (
         <Keybindings bindings={[
