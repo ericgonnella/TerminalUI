@@ -18,7 +18,7 @@ interface Props {
   onInstalled?: (major: number) => void;
 }
 
-type Phase = 'select' | 'confirm-download' | 'confirm-remove' | 'downloading' | 'extracting' | 'done' | 'error';
+type Phase = 'select' | 'confirm-download' | 'confirm-remove' | 'downloading' | 'extracting' | 'removing' | 'done' | 'error';
 
 function safeStatus(input: string): string {
   return input
@@ -59,7 +59,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
   // terminal flicker. A 1s interval reduces that to 1 re-render/s.
   const [spinTick, setSpinTick] = useState(0);
   useEffect(() => {
-    if (phase !== 'downloading' && phase !== 'extracting') return;
+    if (phase !== 'downloading' && phase !== 'extracting' && phase !== 'removing') return;
     const t = setInterval(() => setSpinTick(n => n + 1), 1000);
     return () => clearInterval(t);
   }, [phase]);
@@ -130,14 +130,41 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
     }
   }, [isLinux, refreshInstalled, onInstalled]);
 
-  const doRemove = useCallback((release: PgRelease) => {
-    removeVersion(release.major);
+  const doRemove = useCallback(async (release: PgRelease) => {
+    setPhase('removing');
+    setMessage(`Removing PostgreSQL ${release.patch}…`);
+
+    const onProgress: ProgressCallback = ({ phase: p, message: m }) => {
+      if (p === 'downloading') {
+        if (m) setMessage(safeStatus(m));
+      } else if (p === 'done') {
+        setMessage(safeStatus(m ?? 'Removed'));
+        refreshInstalled();
+        setPhase('select');
+      } else if (p === 'error') {
+        setMessage(safeMultilineStatus(m ?? 'Remove failed'));
+        setPhase('error');
+      }
+    };
+
+    const result = await removeVersion(release.major, onProgress);
     refreshInstalled();
-    setPhase('select');
+    if (result.ok) {
+      // onProgress 'done' already advanced phase — but on non-Linux paths
+      // there's no progress emission, so guard here too.
+      setPhase(prev => (prev === 'removing' ? 'select' : prev));
+    } else {
+      setPhase(prev => (prev === 'removing' ? 'error' : prev));
+      const tail = result.message || 'Remove failed';
+      const withLog = result.logPath && !tail.includes(result.logPath)
+        ? `${tail}\nFull log: ${result.logPath}`
+        : tail;
+      setMessage(prev => prev || withLog);
+    }
   }, [refreshInstalled]);
 
   useInput((input, key) => {
-    if (phase === 'downloading' || phase === 'extracting') return; // no input while busy
+    if (phase === 'downloading' || phase === 'extracting' || phase === 'removing') return; // no input while busy
 
     if (phase === 'done' || phase === 'error') {
       const hasKey = !!input || key.return || key.escape ||
@@ -160,7 +187,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
 
     if (phase === 'confirm-remove') {
       if (input === 'y' || input === 'Y' || key.return) {
-        doRemove(selectedRelease);
+        void doRemove(selectedRelease);
       } else {
         setPhase('select');
       }
@@ -292,6 +319,17 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
           <Box flexDirection="row">
             <Text color="cyan">{spinChar}</Text>
             <Text color="cyan" bold>{`  Extracting PostgreSQL ${selectedRelease.patch}`}</Text>
+          </Box>
+          <Text color="gray" dimColor>{message}</Text>
+        </Box>
+      )}
+
+      {/* Removing (Linux apt-get remove streams output here) */}
+      {phase === 'removing' && (
+        <Box borderStyle="round" borderColor="red" paddingX={2} marginBottom={1} flexDirection="column">
+          <Box flexDirection="row">
+            <Text color="red">{spinChar}</Text>
+            <Text color="red" bold>{`  Removing PostgreSQL ${selectedRelease.patch}`}</Text>
           </Box>
           <Text color="gray" dimColor>{message}</Text>
         </Box>

@@ -674,10 +674,248 @@ export async function downloadVersion(
   }
 }
 
-/** Delete a managed version. */
-export function removeVersion(major: number): void {
-  const dir = versionDir(major);
-  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+/**
+ * Linux-only: remove a postgresql-N package via apt-get.
+ *
+ * Mirrors the install path's privilege-elevation contract:
+ *   - Inline `VAR=val` args to sudo so non-interactive env survives env_reset
+ *     (otherwise apt-listchanges/debconf can hang waiting for a TTY).
+ *   - Direct invocation if already root.
+ *   - Pre-flight `sudo -n true` check with an actionable error message.
+ *
+ * Streams output through `onProgress` so the UI can show live status.
+ */
+async function removeViaApt(
+  major:      number,
+  onProgress: ProgressCallback,
+): Promise<{ ok: boolean; message: string; logPath?: string }> {
+  const logPath = path.join(
+    os.homedir(),
+    '.pgmanager',
+    'logs',
+    `remove-pg${major}-${new Date().toISOString().replace(/[:.]/g, '-')}.log`,
+  );
+  let logStream: fs.WriteStream | null = null;
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    logStream = fs.createWriteStream(logPath, { flags: 'a' });
+  } catch { /* ignore */ }
+  const logRaw  = (text: string): void => { try { logStream?.write(text); } catch { /* ignore */ } };
+  const logLine = (line: string): void => logRaw(`[${new Date().toISOString()}] ${line}\n`);
+  logLine(`pgmanager remove start: postgresql-${major}`);
+  logLine(`uid=${process.getuid?.() ?? '?'} platform=${process.platform}`);
+
+  const NONINTERACTIVE_ENV: Record<string, string> = {
+    DEBIAN_FRONTEND:             'noninteractive',
+    DEBCONF_NONINTERACTIVE_SEEN: 'true',
+    APT_LISTCHANGES_FRONTEND:    'none',
+    APT_LISTBUGS_FRONTEND:       'none',
+    NEEDRESTART_MODE:            'a',
+    NEEDRESTART_SUSPEND:         '1',
+    TERM:                        'dumb',
+    NO_COLOR:                    '1',
+    LC_ALL:                      'C.UTF-8',
+    LANG:                        'C.UTF-8',
+  };
+
+  function spawnCollect(
+    cmd:     string,
+    args:    string[],
+    timeout = 600_000,
+    onLine?: (line: string) => void,
+  ): Promise<{ code: number; out: string; timedOut: boolean }> {
+    return new Promise(resolve => {
+      let settled  = false;
+      let timedOut = false;
+      let out      = '';
+      const env = { ...process.env, ...NONINTERACTIVE_ENV };
+      logLine(`exec: ${cmd} ${args.map(a => /\s/.test(a) ? JSON.stringify(a) : a).join(' ')}`);
+      let proc;
+      try {
+        proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+      } catch (err: any) {
+        logLine(`spawn-error: ${err?.message ?? 'spawn failed'}`);
+        resolve({ code: 1, out: err?.message ?? 'spawn failed', timedOut: false });
+        return;
+      }
+      const handle = (b: Buffer) => {
+        const text = b.toString();
+        out += text;
+        logRaw(text);
+        if (onLine) {
+          text.split(/[\r\n]+/).map(cleanTerminalStatus).filter(Boolean).forEach(onLine);
+        }
+      };
+      proc.stdout?.on('data', handle);
+      proc.stderr?.on('data', handle);
+      const timer = setTimeout(() => {
+        if (settled) return;
+        timedOut = true;
+        logLine(`timeout after ${timeout}ms — killing pid ${proc.pid}`);
+        try { proc.kill('SIGTERM'); } catch { /* ignore */ }
+        setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 2000);
+      }, timeout);
+      proc.on('error', err => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code: 1, out: out + (err?.message ?? ''), timedOut });
+      });
+      proc.on('exit', (code, signal) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        logLine(`exit: code=${code} signal=${signal ?? '-'} timedOut=${timedOut}`);
+        resolve({ code: code ?? 1, out, timedOut });
+      });
+    });
+  }
+
+  const isRoot = process.getuid ? process.getuid() === 0 : false;
+
+  function sudoArgs(cmd: string, args: string[]): string[] {
+    const envPairs = Object.entries(NONINTERACTIVE_ENV).map(([k, v]) => `${k}=${v}`);
+    return ['-n', '-E', ...envPairs, cmd, ...args];
+  }
+
+  const fail = (summary: string, rawOut?: string): { ok: false; message: string; logPath: string } => {
+    const errLines = rawOut
+      ? rawOut.split('\n')
+          .filter(l => /^\s*(E:|Err:|dpkg: error|error processing)/i.test(l))
+          .map(l => l.trim())
+          .filter(Boolean)
+          .slice(-8)
+      : [];
+    const parts: string[] = [`Log: ${logPath}`, '', summary];
+    if (errLines.length > 0) { parts.push(''); parts.push(...errLines); }
+    const full = parts.join('\n');
+    logLine(`FAIL: ${full}`);
+    onProgress({ phase: 'error', downloaded: 0, total: 0, message: full });
+    try { logStream?.end(); } catch { /* ignore */ }
+    return { ok: false, message: full, logPath };
+  };
+
+  // Pre-flight: must be able to elevate.
+  if (!isRoot) {
+    const sudoCheck = await spawnCollect('sudo', ['-n', 'true'], 5_000);
+    if (sudoCheck.code !== 0) {
+      const binPath = process.argv[1] ?? 'pgmanager';
+      return fail(
+        'pgmanager needs root privileges to run apt-get, but `sudo -n` is not available.\n' +
+        '\n' +
+        'Pick one:\n' +
+        `  • Re-run with sudo using the FULL path:   sudo "${binPath}"\n` +
+        '  • Or preserve your PATH:                  sudo -E env "PATH=$PATH" pgmanager\n' +
+        '  • Or grant passwordless sudo to your user (NOPASSWD: ALL in /etc/sudoers.d/).'
+      );
+    }
+  }
+
+  // Throttle apt output → UI to ~3 updates/sec to avoid Ink re-render storms.
+  let lastProgressMs = 0;
+  const forwardLine = (line: string): void => {
+    const now = Date.now();
+    if (now - lastProgressMs >= 300) {
+      lastProgressMs = now;
+      onProgress({ phase: 'downloading', downloaded: 0, total: 0, message: line });
+    }
+  };
+
+  onProgress({ phase: 'downloading', downloaded: 0, total: 0,
+    message: `Removing postgresql-${major} via apt-get…` });
+
+  const APT_NONINTERACTIVE = [
+    '-y', '-q',
+    '-o', 'Dpkg::Use-Pty=0',
+    '-o', 'APT::Color=0',
+    '-o', 'APT::Get::Assume-Yes=true',
+    '-o', 'Dpkg::Options::=--force-confdef',
+    '-o', 'Dpkg::Options::=--force-confold',
+    '-o', 'DPkg::Pre-Install-Pkgs::=',
+    '-o', 'DPkg::Lock::Timeout=120',
+  ];
+
+  // Use --purge so config files are removed too — matches user expectation
+  // of "delete this version". The data directory is NOT touched (Debian
+  // packages put data at /var/lib/postgresql which is owned by the postgres
+  // system user; we leave that alone so user databases aren't destroyed).
+  const removeArgs = [
+    'remove', ...APT_NONINTERACTIVE, '--purge',
+    `postgresql-${major}`,
+    `postgresql-client-${major}`,
+  ];
+
+  const r = isRoot
+    ? await spawnCollect('apt-get', removeArgs, 600_000, forwardLine)
+    : await spawnCollect('sudo',    sudoArgs('apt-get', removeArgs), 600_000, forwardLine);
+
+  if (r.code !== 0) {
+    if (r.timedOut) {
+      return fail('apt-get remove timed out (10 min). dpkg lock may be held by another process.', r.out);
+    }
+    return fail(`apt-get remove exited with code ${r.code}`, r.out);
+  }
+
+  // Run autoremove to clean up orphaned dependencies — best-effort, never fail.
+  const autoArgs = ['autoremove', ...APT_NONINTERACTIVE];
+  await (isRoot
+    ? spawnCollect('apt-get', autoArgs, 300_000, forwardLine)
+    : spawnCollect('sudo',    sudoArgs('apt-get', autoArgs), 300_000, forwardLine));
+
+  logLine('remove completed successfully');
+  try { logStream?.end(); } catch { /* ignore */ }
+  onProgress({ phase: 'done', downloaded: 0, total: 0,
+    message: `Removed postgresql-${major}` });
+  return { ok: true, message: `Removed postgresql-${major}`, logPath };
+}
+
+/**
+ * Delete a managed PostgreSQL version.
+ *
+ * Linux behaviour: if a system apt-installed copy is present at
+ * `/usr/lib/postgresql/N/`, runs `apt-get remove --purge postgresql-N`
+ * (with the same sudo / non-interactive plumbing as install).
+ *
+ * Always also removes the portable copy at `~/.pgmanager/pg-versions/N/`
+ * if present.
+ */
+export async function removeVersion(
+  major:       number,
+  onProgress?: ProgressCallback,
+): Promise<{ ok: boolean; message: string; logPath?: string }> {
+  const portableDir = versionDir(major);
+  const portableExists = fs.existsSync(portableDir);
+  const aptInstalled   = aptBinDir(major) !== null;
+
+  // No-op safety net — should be unreachable from the UI which only offers
+  // remove for installed versions, but be explicit.
+  if (!portableExists && !aptInstalled) {
+    const msg = `PostgreSQL ${major} is not installed.`;
+    onProgress?.({ phase: 'error', downloaded: 0, total: 0, message: msg });
+    return { ok: false, message: msg };
+  }
+
+  // Linux apt-managed install — delegate to apt-get.
+  if (aptInstalled && process.platform === 'linux') {
+    const result = await removeViaApt(major, onProgress ?? (() => {}));
+    // Also clear the portable dir if the user happens to have one too.
+    if (portableExists) {
+      try { fs.rmSync(portableDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    return result;
+  }
+
+  // Portable / Windows install — just delete the directory.
+  try {
+    fs.rmSync(portableDir, { recursive: true, force: true });
+    const msg = `Removed PostgreSQL ${major}`;
+    onProgress?.({ phase: 'done', downloaded: 0, total: 0, message: msg });
+    return { ok: true, message: msg };
+  } catch (err: any) {
+    const msg = `Failed to remove ${portableDir}: ${err.message}`;
+    onProgress?.({ phase: 'error', downloaded: 0, total: 0, message: msg });
+    return { ok: false, message: msg };
+  }
 }
 
 /** Human-readable file size string. */
