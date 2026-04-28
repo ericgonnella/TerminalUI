@@ -47,12 +47,16 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
   );
   const dbs = dbState.data ?? [];
 
-  // Refresh status every 3s
+  // Refresh status every 3s. Only call setStatus when the value actually
+  // changed — otherwise every poll triggers a full re-render of this
+  // screen (info panel + databases table) which is a major flicker source
+  // over SSH where every redraw is visible.
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
       const s = await getInstanceStatus(pgCtlBin, instance);
-      if (!cancelled) setStatus(s);
+      if (cancelled) return;
+      setStatus(prev => (prev === s ? prev : s));
     };
     void refresh();
     const t = setInterval(() => { void refresh(); }, 3000);
