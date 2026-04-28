@@ -9,6 +9,7 @@ import { ActivityLog }      from '../components/ActivityLog';
 import { Keybindings }      from '../components/Keybindings';
 import { PeekPasswordInput } from '../components/PeekPasswordInput';
 import { initDb, startInstance, findFreePort } from '../services/pgctl';
+import { configureHostedMode } from '../services/pgConfig';
 import { validatePassword, validatePort } from '../services/security';
 import { allInstalledVersions } from '../services/pgDetect';
 import type { InstalledVersion } from '../services/pgDetect';
@@ -17,13 +18,7 @@ import type { InstancesState } from '../hooks/useInstances';
 import type { Instance, InstallationType, LogEntry } from '../types';
 
 type Step = 'version' | 'placement' | 'name' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
-type Phase = 'idle' | 'initdb' | 'starting' | 'verifying' | 'complete';
-
-const PHASES: { id: Phase; label: string }[] = [
-  { id: 'initdb',    label: 'Initialising data directory' },
-  { id: 'starting',  label: 'Starting PostgreSQL server'  },
-  { id: 'verifying', label: 'Verifying connection'        },
-];
+type Phase = 'idle' | 'initdb' | 'configuring' | 'starting' | 'verifying' | 'complete';
 
 let _logId = 1;
 function makeLog(level: LogEntry['level'], msg: string): LogEntry {
@@ -100,6 +95,23 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   // Slow-tick spinner: 1s interval instead of ink-spinner's ~80ms so we only
   // cause one full Ink re-render per second during the running phase, reducing
   // terminal flicker heavily over SSH connections.
+  // Phase list: include the 'configuring' step only for hosted instances on Linux
+  // so the progress bar always reflects exactly the work being done.
+  const PHASES = React.useMemo(
+    () => {
+      const base: { id: Phase; label: string }[] = [
+        { id: 'initdb',      label: 'Initialising data directory'       },
+        { id: 'starting',    label: 'Starting PostgreSQL server'        },
+        { id: 'verifying',   label: 'Verifying connection'              },
+      ];
+      if (placement === 'hosted' && process.platform === 'linux') {
+        base.splice(1, 0, { id: 'configuring', label: 'Configuring for network access' });
+      }
+      return base;
+    },
+    [placement],
+  );
+
   const [spinTick, setSpinTick] = useState(0);
   useEffect(() => {
     if (step !== 'running') return;
@@ -226,6 +238,25 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       return;
     }
     appendLog(makeLog('INFO', 'Data directory initialised.'));
+
+    // Hosted + Linux: configure listen_addresses, pg_hba.conf remote auth rules,
+    // and open the firewall port BEFORE starting the server so the first start
+    // already picks up the correct configuration.
+    if (placement === 'hosted' && process.platform === 'linux') {
+      setPhase('configuring');
+      appendLog(makeLog('INFO', 'Configuring instance for network access...'));
+      const cfgRes = await configureHostedMode(dir, portNum, line => {
+        appendLog(makeLog('DEBUG', line));
+      });
+      if (!cfgRes.ok) {
+        appendLog(makeLog('ERROR', `Network configuration failed: ${cfgRes.message}`));
+        setError(cfgRes.message);
+        setStep('error');
+        return;
+      }
+      appendLog(makeLog('INFO', 'Network configuration applied.'));
+    }
+
     setPhase('starting');
     appendLog(makeLog('INFO', `Starting on port ${portNum}...`));
     appendLog(makeLog('DEBUG', `pg_ctl: ${activePgCtl || '(Windows service)'}`));
@@ -380,7 +411,8 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
               <Text color="white" bold>{'Hosted / shared server'}</Text>
             </Box>
             <Text color="gray" dimColor>{'     Network-reachable. Strong password REQUIRED (min 12, 3+ char classes).'}</Text>
-            <Text color="gray" dimColor>{'     Audit log enabled. Review firewall + pg_hba.conf after creation.'}</Text>
+            <Text color="gray" dimColor>{'     Automatically sets listen_addresses=*, remote pg_hba.conf rules, and'}</Text>
+            <Text color="gray" dimColor>{'     opens the port in ufw/firewall-cmd. Audit log enabled.'}</Text>
           </Box>
         </Box>
       )}
