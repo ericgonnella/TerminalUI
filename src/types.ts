@@ -104,7 +104,8 @@ export type ScreenName =
   | 'table-browser'
   | 'query'
   | 'download-pg'
-  | 'database-detail';
+  | 'database-detail'
+  | 'provision-app';
 
 export interface HomeScreen       { name: 'home' }
 export interface NewInstanceScreen { name: 'new-instance' }
@@ -117,6 +118,7 @@ export interface TableBrowserScreen  { name: 'table-browser';   instance: Instan
 export interface QueryScreen         { name: 'query';           instance: Instance; database: string }
 export interface DownloadPgScreen    { name: 'download-pg' }
 export interface DatabaseDetailScreen { name: 'database-detail'; instance: Instance; database: string }
+export interface ProvisionAppScreen    { name: 'provision-app';    instance: Instance }
 
 export type ScreenDef =
   | HomeScreen
@@ -129,4 +131,5 @@ export type ScreenDef =
   | TableBrowserScreen
   | QueryScreen
   | DownloadPgScreen
-  | DatabaseDetailScreen;
+  | DatabaseDetailScreen
+  | ProvisionAppScreen;

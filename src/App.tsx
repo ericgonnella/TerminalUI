@@ -15,6 +15,7 @@ import { TableBrowserScreen } from './screens/TableBrowserScreen';
 import { QueryScreen }        from './screens/QueryScreen';
 import { DownloadPgScreen }        from './screens/DownloadPgScreen';
 import { DatabaseDetailScreen }    from './screens/DatabaseDetailScreen';
+import { ProvisionAppScreen }      from './screens/ProvisionAppScreen';
 import { detectPostgres }     from './services/pgDetect';
 
 interface AppProps {
@@ -128,6 +129,13 @@ export const App: React.FC<AppProps> = ({ pgCtlBin: initialPgCtl, initdbBin: ini
             nav={nav}
             instance={screen.instance}
             database={screen.database}
+          />
+        );
+      case 'provision-app':
+        return (
+          <ProvisionAppScreen
+            nav={nav}
+            instance={screen.instance}
           />
         );
       default:

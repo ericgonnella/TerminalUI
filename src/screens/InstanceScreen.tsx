@@ -132,6 +132,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
     if (input === 's' || input === 'S') void doToggle();
     if (input === 'd' || input === 'D') setConfirmDel(true);
     if (input === 'u' || input === 'U') nav.push({ name: 'users', instance });
+    if (input === 'a' || input === 'A') nav.push({ name: 'provision-app', instance });
     if (input === 'm' || input === 'M') {
       if (dbs[selected]) nav.push({ name: 'migrations', instance, database: dbs[selected]!.name });
     }
@@ -243,6 +244,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
         { key: 'N',     label: 'new db'     },
         { key: 'S',     label: 'start/stop' },
         { key: 'U',     label: 'users'      },
+        { key: 'A',     label: 'app db'     },
         { key: 'M',     label: 'migrations' },
         { key: 'D',     label: 'delete'     },
         { key: 'Esc',   label: 'back'       },
