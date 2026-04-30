@@ -367,6 +367,63 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
                 <Text color="white">{inst.winServiceName}</Text>
               </Box>
             )}
+            {(() => {
+              const ra = inst.remoteAccess;
+              const cidrs = ra?.directCidrs ?? [];
+              const tunnels = ra?.sshTunnels ?? [];
+              if (cidrs.length === 0 && tunnels.length === 0) return null;
+              return (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text color="gray">{'─'.repeat(56)}</Text>
+                  <Text color="magenta" bold>{'Online Access'}</Text>
+                  {ra?.listenAllUpdated && (
+                    <Box flexDirection="row">
+                      <Text color="gray">{'Listen:    '}</Text>
+                      <Text color="white">{'all interfaces (0.0.0.0 / ::) — postgresql.conf updated'}</Text>
+                    </Box>
+                  )}
+                  {cidrs.length > 0 && (
+                    <Box flexDirection="column" marginTop={1}>
+                      <Text color="gray">{`Direct TCP allow-list (${cidrs.length}):`}</Text>
+                      {cidrs.map((c, i) => (
+                        <Box key={`cidr-${i}`} flexDirection="row">
+                          <Text color="cyan">{'  • '}</Text>
+                          <Text color="white">{c.cidr}</Text>
+                          <Text color="gray" dimColor>{`   (added ${c.addedAt.slice(0, 10)})`}</Text>
+                        </Box>
+                      ))}
+                    </Box>
+                  )}
+                  {tunnels.length > 0 && (
+                    <Box flexDirection="column" marginTop={1}>
+                      <Text color="gray">{`SSH reverse tunnels (${tunnels.length}):`}</Text>
+                      {tunnels.map((t, i) => (
+                        <Box key={`tun-${i}`} flexDirection="column">
+                          <Box flexDirection="row">
+                            <Text color="cyan">{'  • '}</Text>
+                            <Text color="white">{`${t.sshUser}@${t.remoteHost}:${t.sshPort}`}</Text>
+                            <Text color="gray">{'  →  remote port '}</Text>
+                            <Text color="white">{String(t.remotePort)}</Text>
+                          </Box>
+                          {t.serviceName && (
+                            <Text color="gray" dimColor>{`      service: ${t.serviceName}`}</Text>
+                          )}
+                        </Box>
+                      ))}
+                      <Box marginTop={1} flexDirection="column">
+                        <Text color="gray" dimColor>{'    Connect from a tunnel client with:'}</Text>
+                        {tunnels.map((t, i) => (
+                          <Text key={`tun-cmd-${i}`} color="cyan">
+                            {`      psql -h 127.0.0.1 -p ${t.remotePort} -U ${inst.superuser} -d postgres`}
+                          </Text>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
+                  <Text color="gray" dimColor>{'    Press [X] on the instance screen to manage online access.'}</Text>
+                </Box>
+              );
+            })()}
             <Text color="gray">{'─'.repeat(56)}</Text>
             <Text color="gray">{'Connection URL:'}</Text>
             <Text color="cyan">{connUrl}</Text>
