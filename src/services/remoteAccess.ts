@@ -28,6 +28,7 @@ import { spawn }    from 'child_process';
 import * as fs      from 'fs';
 import * as os      from 'os';
 import * as path    from 'path';
+import * as dns     from 'dns';
 import type { Instance, RemoteAccessConfig, CidrEntry, SshTunnelEntry } from '../types';
 import { startInstance, stopInstance, getInstanceStatus } from './pgctl';
 import * as audit from './auditLog';
@@ -89,6 +90,66 @@ export function validateCidr(input: string): { ok: boolean; value?: string; reas
     return { ok: true, value: `${ip}/${bits}` };
   }
   return { ok: false, reason: 'Not a valid IPv4 or IPv6 address.' };
+}
+
+// Hostname / FQDN. RFC 1123: labels [a-zA-Z0-9-], cannot start or end with -,
+// max 63 chars per label, total ≤ 253. We REQUIRE at least one dot to avoid
+// confusion with bare words and to keep this distinct from local hostnames.
+const HOSTNAME_RE =
+  /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;
+
+export type AllowEntry =
+  | { kind: 'cidr'; value: string }              // already CIDR-shaped
+  | { kind: 'host'; value: string };             // FQDN — PG resolves at connect time
+
+/**
+ * User-friendly validator that accepts:
+ *   • a single IPv4 / IPv6 address      → normalised to /32 or /128
+ *   • a CIDR block                       → left as-is
+ *   • a fully-qualified domain name     → used directly in pg_hba.conf
+ *
+ * The hostname is NOT resolved here — we let PostgreSQL do that at connect
+ * time (it does forward+reverse DNS) so the rule keeps working when the
+ * user's home IP changes (e.g. dynamic-DNS like myhome.duckdns.org). For the
+ * host firewall we resolve once at apply-time — see resolveAllowEntry().
+ */
+export function validateAllowEntry(input: string): { ok: boolean; value?: AllowEntry; reason?: string } {
+  const v = input.trim();
+  if (!v) return { ok: false, reason: 'Enter an IP, CIDR or domain name.' };
+  if (v.length > 253) return { ok: false, reason: 'Entry is too long.' };
+  if (/[\s;|&`$<>@\\?#]/.test(v)) return { ok: false, reason: 'Contains invalid characters.' };
+
+  // Try CIDR / IP first (covers "203.0.113.5", "10.0.0.0/24", "2001:db8::/32").
+  const c = validateCidr(v);
+  if (c.ok && c.value) return { ok: true, value: { kind: 'cidr', value: c.value } };
+
+  // Otherwise must look like a real domain (foo.example.com).
+  if (HOSTNAME_RE.test(v)) {
+    return { ok: true, value: { kind: 'host', value: v.toLowerCase() } };
+  }
+
+  return {
+    ok: false,
+    reason: 'Enter an IPv4/IPv6 address, a CIDR block, or a domain name like home.example.com.',
+  };
+}
+
+/**
+ * Resolve a hostname to one or more IPv4 / IPv6 addresses for firewall use.
+ * Returns an empty array if resolution fails — callers warn the user and
+ * fall back to leaving pg_hba.conf to PG's connect-time DNS.
+ */
+async function resolveHostname(hostname: string): Promise<string[]> {
+  const out: string[] = [];
+  try {
+    const v4 = await dns.promises.resolve4(hostname);
+    out.push(...v4);
+  } catch { /* no A records is fine */ }
+  try {
+    const v6 = await dns.promises.resolve6(hostname);
+    out.push(...v6);
+  } catch { /* no AAAA is fine */ }
+  return Array.from(new Set(out));
 }
 
 /** Whitelist hostname / IP for SSH tunnel target. */
@@ -425,24 +486,49 @@ export async function applyDirectAccess(
   opts: ApplyDirectOptions,
   onLine: (line: string) => void,
 ): Promise<ApplyDirectResult> {
-  // 1) Validate CIDRs.
-  const normalised: string[] = [];
+  // 1) Validate inputs. Each entry can be IP, CIDR, or hostname/FQDN.
+  //    Hostnames get written verbatim to pg_hba.conf (PG resolves on connect)
+  //    AND resolved to literal IPs for the host-firewall rule.
+  const hbaTokens:        string[] = [];                   // what goes into pg_hba.conf
+  const firewallTargets:  string[] = [];                   // literal CIDRs for ufw / netsh / firewall-cmd
+  const hostResolutions:  Array<{ host: string; ips: string[] }> = [];
+  const hostsUnresolved:  string[] = [];
+
   for (const raw of opts.cidrs) {
-    const v = validateCidr(raw);
+    const v = validateAllowEntry(raw);
     if (!v.ok || !v.value) {
-      audit.record({ category: 'instance', action: 'remote-access:apply-direct', instanceId: instance.id, ok: false, error: v.reason ?? 'invalid CIDR' });
+      audit.record({ category: 'instance', action: 'remote-access:apply-direct', instanceId: instance.id, ok: false, error: v.reason ?? 'invalid entry' });
       return {
-        ok: false, message: `Invalid CIDR "${raw}": ${v.reason}`,
+        ok: false, message: `Invalid entry "${raw}": ${v.reason}`,
         restartRequired: false, effectiveCidrs: [], firewallApplied: [], firewallSkipped: [],
         firewallWarning: null, restarted: false,
       };
     }
-    normalised.push(v.value);
+
+    if (v.value.kind === 'cidr') {
+      hbaTokens.push(v.value.value);
+      firewallTargets.push(v.value.value);
+    } else {
+      const host = v.value.value;
+      hbaTokens.push(host);
+      onLine(`Resolving ${host} for host-firewall rule...`);
+      const ips = await resolveHostname(host);
+      if (ips.length === 0) {
+        hostsUnresolved.push(host);
+        onLine(`  ⚠  ${host} did not resolve right now — PostgreSQL will still resolve it at connect time, but no firewall rule will be added until DNS works.`);
+      } else {
+        hostResolutions.push({ host, ips });
+        for (const ip of ips) {
+          firewallTargets.push(ip.includes(':') ? `${ip}/128` : `${ip}/32`);
+        }
+        onLine(`  → ${host} → ${ips.join(', ')}`);
+      }
+    }
   }
 
-  // 2) Merge with existing managed CIDRs (idempotent re-runs are safe).
+  // 2) Merge with existing managed entries (idempotent re-runs are safe).
   const existing = readManagedCidrs(instance.dataDir, instance.id);
-  const merged   = Array.from(new Set([...existing, ...normalised]));
+  const merged   = Array.from(new Set([...existing, ...hbaTokens]));
 
   // 3) Update postgresql.conf if needed.
   let listenChanged = false;
@@ -476,9 +562,16 @@ export async function applyDirectAccess(
     };
   }
 
-  // 5) Apply firewall.
-  const fw = await applyFirewall(instance, normalised, onLine);
-  if (fw.warning) onLine(`Firewall: ${fw.warning}`);
+  // 5) Apply firewall against the resolved literal targets only. Hostnames
+  //    that didn't resolve right now are still in pg_hba.conf so PG will
+  //    accept them once DNS recovers — we just couldn't add a firewall rule.
+  const fw = await applyFirewall(instance, firewallTargets, onLine);
+  let fwWarning = fw.warning;
+  if (hostsUnresolved.length > 0) {
+    const note = `DNS lookup failed for: ${hostsUnresolved.join(', ')}. pg_hba.conf still authorises them, but no firewall rule was added — re-run after DNS is fixed.`;
+    fwWarning = fwWarning ? `${fwWarning}  ${note}` : note;
+  }
+  if (fwWarning) onLine(`Firewall: ${fwWarning}`);
 
   // 6) Reload or restart PostgreSQL.
   const status = await getInstanceStatus(opts.pgCtlBin, instance);
@@ -513,17 +606,24 @@ export async function applyDirectAccess(
 
   audit.record({
     category: 'instance', action: 'remote-access:apply-direct', instanceId: instance.id, ok: true,
-    meta: { cidrCount: merged.length, listenChanged, restarted, alreadyAll },
+    meta: {
+      cidrCount:        merged.length,
+      hostnameCount:    hostResolutions.length,
+      unresolvedHosts:  hostsUnresolved.join(',') || 'none',
+      listenChanged, restarted, alreadyAll,
+    },
   });
 
   return {
     ok: true,
-    message: `Configured ${merged.length} CIDR(s).`,
+    message: hostResolutions.length > 0
+      ? `Configured ${merged.length} entry(ies) — ${hostResolutions.length} hostname(s) resolved for the firewall.`
+      : `Configured ${merged.length} entry(ies).`,
     restartRequired: restartRequired && !restarted,
     effectiveCidrs:  merged,
     firewallApplied: fw.applied,
     firewallSkipped: fw.skipped,
-    firewallWarning: fw.warning,
+    firewallWarning: fwWarning,
     restarted,
   };
 }
@@ -544,7 +644,18 @@ export async function revokeDirectAccess(
     return { ok: false, message: `pg_hba.conf update failed: ${String(err?.message ?? err)}`, restartRequired: false };
   }
 
-  await revokeFirewall(instance, cidrs, onLine);
+  // For firewall revocation we need literal IPs/CIDRs. Hostnames in the
+  // managed block are re-resolved here so we can remove the matching rules.
+  const fwTargets: string[] = [];
+  for (const entry of cidrs) {
+    if (HOSTNAME_RE.test(entry)) {
+      const ips = await resolveHostname(entry);
+      for (const ip of ips) fwTargets.push(ip.includes(':') ? `${ip}/128` : `${ip}/32`);
+    } else {
+      fwTargets.push(entry);
+    }
+  }
+  await revokeFirewall(instance, fwTargets, onLine);
 
   const status = await getInstanceStatus(pgCtlBin, instance);
   if (status === 'running') {

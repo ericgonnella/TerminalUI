@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import {
-  validateCidr, validateSshHost, validateSshUser, validateTcpPort,
+  validateAllowEntry, validateSshHost, validateSshUser, validateTcpPort,
   applyDirectAccess, revokeDirectAccess,
   generateAndSaveSshTunnel, deleteSshTunnelFile,
   withDirectApplied, withDirectRevoked, withTunnelAdded, withAllTunnelsRevoked,
@@ -219,10 +219,10 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
   // ─── Submit handlers ───────────────────────────────────────────────────────
 
   const handleCidrSubmit = useCallback((v: string) => {
-    const c = validateCidr(v);
-    if (!c.ok || !c.value) { setFieldError(c.reason ?? 'Invalid CIDR'); return; }
+    const c = validateAllowEntry(v);
+    if (!c.ok || !c.value) { setFieldError(c.reason ?? 'Invalid entry'); return; }
     setFieldError(null);
-    setPendingCidrs(prev => [...prev, c.value!]);
+    setPendingCidrs(prev => [...prev, c.value!.value]);
     setCidrInput('');
     setStep('direct-more');
   }, []);
@@ -360,7 +360,7 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
         <Box marginTop={1}>
           <Text color="gray">{'Host: '}</Text><Text color="white">{host}</Text>
           <Text color="gray">{'   Port: '}</Text><Text color="white">{String(instance.port)}</Text>
-          <Text color="gray">{'   Direct CIDRs: '}</Text>
+          <Text color="gray">{'   Allowed sources: '}</Text>
           <Text color={directCount > 0 ? 'yellow' : 'gray'}>{String(directCount)}</Text>
           <Text color="gray">{'   SSH tunnels: '}</Text>
           <Text color={tunnelCount > 0 ? 'yellow' : 'gray'}>{String(tunnelCount)}</Text>
@@ -461,8 +461,34 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
       {step === 'direct-cidr' && (
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
-            <Text color="white" bold>{'Allowed source IP / CIDR'}</Text>
-            <Text color="gray" dimColor>{'  Examples: 203.0.113.5  (single IP),  198.51.100.0/24,  2001:db8::/32'}</Text>
+            <Text color="white" bold>{'Who is allowed to connect?'}</Text>
+            <Text color="gray">{'Enter an '}<Text color="cyan">{'IP address'}</Text>{', a '}<Text color="cyan">{'CIDR block'}</Text>{', or a '}<Text color="cyan">{'domain name'}</Text>{'.'}</Text>
+            <Box marginTop={1} flexDirection="column">
+              <Box flexDirection="row">
+                <Text color="gray" dimColor>{'  Single IP   →  '}</Text>
+                <Text color="yellow">{'203.0.113.5'}</Text>
+                <Text color="gray" dimColor>{'                 (one specific machine)'}</Text>
+              </Box>
+              <Box flexDirection="row">
+                <Text color="gray" dimColor>{'  CIDR        →  '}</Text>
+                <Text color="yellow">{'198.51.100.0/24'}</Text>
+                <Text color="gray" dimColor>{'             (a whole subnet)'}</Text>
+              </Box>
+              <Box flexDirection="row">
+                <Text color="gray" dimColor>{'  Domain      →  '}</Text>
+                <Text color="yellow">{'home.example.com'}</Text>
+                <Text color="gray" dimColor>{'           (resolved by DNS — great for dynamic IPs)'}</Text>
+              </Box>
+              <Box flexDirection="row">
+                <Text color="gray" dimColor>{'  IPv6        →  '}</Text>
+                <Text color="yellow">{'2001:db8::/32'}</Text>
+              </Box>
+            </Box>
+            <Box marginTop={1}>
+              <Text color="gray" dimColor>
+                {'  Tip: domains like DuckDNS / No-IP keep working when your home IP changes.'}
+              </Text>
+            </Box>
             {pendingCidrs.length > 0 && (
               <Box marginTop={1} flexDirection="column">
                 <Text color="gray" dimColor>{'  Already pending:'}</Text>
@@ -475,7 +501,7 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
                 value={cidrInput}
                 onChange={(v) => { setCidrInput(v); if (fieldError) setFieldError(null); }}
                 onSubmit={handleCidrSubmit}
-                placeholder="203.0.113.5/32"
+                placeholder="203.0.113.5  or  home.example.com"
               />
             </Box>
             {!!fieldError && <Text color="red">{`  ✗ ${fieldError}`}</Text>}
@@ -497,7 +523,7 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
               {pendingCidrs.map(c => <Text key={c} color="cyan">{`    • ${c}`}</Text>)}
             </Box>
             <Box marginTop={1}>
-              <Text color="white">{'Add another CIDR? '}</Text>
+              <Text color="white">{'Add another? '}</Text>
               <Text color="green" bold>{'[Y] '}</Text>
               <Text color="gray">{'yes  '}</Text>
               <Text color="red" bold>{'[N] '}</Text>
@@ -692,7 +718,7 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
       {step === 'revoke-direct-confirm' && (
         <ConfirmDialog
           danger
-          message={`Remove all ${directCount} direct TCP rule(s) from pg_hba.conf and the firewall?`}
+          message={`Remove all ${directCount} direct TCP rule(s) from pg_hba.conf and the host firewall?`}
           onConfirm={() => void doRevokeDirect()}
           onCancel={() => setStep('manage')}
         />
