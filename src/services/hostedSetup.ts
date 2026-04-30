@@ -286,3 +286,157 @@ export function buildSetupScriptForInstance(instance: Instance, allowList: strin
     instanceId: instance.id,
   });
 }
+
+// ─── Cloudflare Tunnel — guided alternative for upstream-firewalled VPSs ────
+//
+// When the cloud provider (BuyVM, Hetzner ingress filter, etc.) silently
+// drops inbound packets on the Postgres port, opening ufw on the VPS
+// alone won't help. A Cloudflare Tunnel solves it by reversing direction:
+// `cloudflared` on the VPS opens a long-lived OUTBOUND HTTPS connection to
+// Cloudflare's edge, and Cloudflare brokers traffic from clients into it.
+// No inbound ports needed at all.
+//
+// IMPORTANT: TCP-mode tunnels (which Postgres needs) require the *client*
+// to also run `cloudflared access tcp --hostname pg.your.domain --url
+// tcp://localhost:5432` to terminate the tunnel locally. This is fine for
+// laptop / backend clients, but Netlify Functions cannot run `cloudflared`
+// — for serverless front-ends use a managed pooler (Supabase, Neon) or
+// open the upstream firewall and use 0.0.0.0/0 + scram-sha-256.
+
+const TUNNEL_HOSTNAME_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
+
+export interface BuildTunnelOpts {
+  /** Local Postgres port on the VPS, e.g. 5434. */
+  port:        number;
+  /** FQDN to expose the tunnel under, e.g. 'pg.example.com'. Must be
+   *  on a domain you've added to Cloudflare (any plan). */
+  hostname:    string;
+  /** Stable name for the tunnel resource on Cloudflare. We sanitise. */
+  tunnelName?: string;
+  /** Optional instance id, embedded in the default tunnel name. */
+  instanceId?: string;
+}
+
+export interface BuiltTunnelScript {
+  serverScript: string;
+  clientCommand: string;
+  hostname: string;
+  tunnelName: string;
+}
+
+export function buildCloudflareTunnelScript(opts: BuildTunnelOpts): BuiltTunnelScript {
+  const port = opts.port;
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error('Invalid port.');
+  }
+  const hostname = opts.hostname.trim().toLowerCase();
+  if (!TUNNEL_HOSTNAME_RE.test(hostname)) {
+    throw new Error('Hostname must be a valid FQDN (e.g. pg.example.com).');
+  }
+  const rawName = opts.tunnelName ?? `pgmanager-${opts.instanceId ?? 'default'}`;
+  const tunnelName = rawName.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 60) || 'pgmanager';
+
+  const serverScript =
+`#!/usr/bin/env bash
+# pgmanager — Cloudflare Tunnel setup (server side, run on the VPS)
+# Idempotent: safe to re-run. Requires you to have logged in to a
+# Cloudflare account that owns the parent domain of: ${hostname}
+set -euo pipefail
+
+PG_LOCAL_PORT=${port}
+TUNNEL_NAME=${shQuote(tunnelName)}
+HOSTNAME=${shQuote(hostname)}
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "==> Re-executing under sudo so we can install cloudflared and a systemd service"
+  exec sudo -E bash "$0" "$@"
+fi
+
+# 1. Install cloudflared if missing.
+if ! command -v cloudflared >/dev/null 2>&1; then
+  echo "==> Installing cloudflared"
+  ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+  case "$ARCH" in
+    amd64|x86_64) PKG=cloudflared-linux-amd64.deb ;;
+    arm64|aarch64) PKG=cloudflared-linux-arm64.deb ;;
+    armhf|armv7l) PKG=cloudflared-linux-arm.deb ;;
+    *) echo "Unsupported arch: $ARCH" >&2; exit 2 ;;
+  esac
+  TMP="$(mktemp -d)"
+  curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/$PKG" -o "$TMP/$PKG"
+  if command -v dpkg >/dev/null 2>&1; then
+    dpkg -i "$TMP/$PKG" || apt-get install -fy
+  else
+    # Fallback: drop the static binary
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o /usr/local/bin/cloudflared
+    chmod +x /usr/local/bin/cloudflared
+  fi
+  rm -rf "$TMP"
+fi
+
+# 2. Authenticate (interactive — opens a browser link).
+if [ ! -f /root/.cloudflared/cert.pem ] && [ ! -f "$HOME/.cloudflared/cert.pem" ]; then
+  echo "==> One-time browser login. Open the URL it prints and pick the parent zone for $HOSTNAME"
+  cloudflared tunnel login
+fi
+
+# 3. Create the tunnel if it doesn't exist.
+EXISTING="$(cloudflared tunnel list -o json 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); name=sys.argv[1]; print(next((t["id"] for t in data if t["name"]==name), ""))' "$TUNNEL_NAME" || true)"
+if [ -z "$EXISTING" ]; then
+  echo "==> Creating tunnel: $TUNNEL_NAME"
+  cloudflared tunnel create "$TUNNEL_NAME"
+  EXISTING="$(cloudflared tunnel list -o json | python3 -c 'import sys,json; data=json.load(sys.stdin); name=sys.argv[1]; print(next((t["id"] for t in data if t["name"]==name), ""))' "$TUNNEL_NAME")"
+fi
+if [ -z "$EXISTING" ]; then echo "ERROR: failed to create or look up tunnel" >&2; exit 3; fi
+TUNNEL_ID="$EXISTING"
+echo "    tunnel id: $TUNNEL_ID"
+
+# 4. DNS route (Cloudflare creates the CNAME for us).
+echo "==> Routing $HOSTNAME -> tunnel"
+cloudflared tunnel route dns "$TUNNEL_NAME" "$HOSTNAME" || true
+
+# 5. Write the per-tunnel config so the service forwards TCP to localhost:PG_LOCAL_PORT.
+mkdir -p /etc/cloudflared
+CRED_SRC="/root/.cloudflared/$TUNNEL_ID.json"
+[ -f "$CRED_SRC" ] || CRED_SRC="$HOME/.cloudflared/$TUNNEL_ID.json"
+cp -f "$CRED_SRC" "/etc/cloudflared/$TUNNEL_ID.json"
+cat > /etc/cloudflared/config.yml <<EOF
+tunnel: $TUNNEL_ID
+credentials-file: /etc/cloudflared/$TUNNEL_ID.json
+ingress:
+  - hostname: $HOSTNAME
+    service: tcp://localhost:$PG_LOCAL_PORT
+  - service: http_status:404
+EOF
+
+# 6. Install + start a systemd service that runs as a daemon.
+if ! systemctl list-unit-files | grep -q '^cloudflared\\.service'; then
+  cloudflared service install || true
+fi
+systemctl daemon-reload || true
+systemctl enable cloudflared 2>/dev/null || true
+systemctl restart cloudflared
+
+echo
+echo "OK — tunnel up. Test from any machine that has cloudflared installed:"
+echo
+echo "  cloudflared access tcp --hostname $HOSTNAME --url tcp://localhost:$PG_LOCAL_PORT"
+echo "  psql -h 127.0.0.1 -p $PG_LOCAL_PORT -U <user> -d postgres"
+`;
+
+  // The "client side" is what the user runs on their laptop / app server
+  // to terminate the TCP tunnel locally. They then connect psql to
+  // 127.0.0.1:<port>. Netlify functions cannot run this — see header note.
+  const clientCommand =
+    `cloudflared access tcp --hostname ${hostname} --url tcp://localhost:${port}`;
+
+  return { serverScript, clientCommand, hostname, tunnelName };
+}
+
+export function buildCloudflareTunnelForInstance(instance: Instance, hostname: string): BuiltTunnelScript {
+  return buildCloudflareTunnelScript({
+    port:       instance.port,
+    hostname,
+    instanceId: instance.id,
+  });
+}

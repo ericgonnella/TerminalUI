@@ -137,6 +137,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
     if ((input === 'h' || input === 'H') && instance.installationType === 'hosted') {
       nav.push({ name: 'hosted-setup', instance });
     }
+    if (input === 't' || input === 'T') nav.push({ name: 'cloudflare-tunnel', instance });
     if (input === 'm' || input === 'M') {
       if (dbs[selected]) nav.push({ name: 'migrations', instance, database: dbs[selected]!.name });
     }
@@ -268,6 +269,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
         ...(instance.installationType === 'hosted'
           ? [{ key: 'H', label: 'hosted setup' }]
           : []),
+        { key: 'T',     label: 'cf tunnel'  },
         { key: 'M',     label: 'migrations' },
         { key: 'D',     label: 'delete'     },
         { key: 'Esc',   label: 'back'       },

@@ -150,7 +150,9 @@ export type ScreenName =
   | 'download-pg'
   | 'database-detail'
   | 'provision-app'
-  | 'remote-access';
+  | 'remote-access'
+  | 'hosted-setup'
+  | 'cloudflare-tunnel';
 
 export interface HomeScreen       { name: 'home' }
 export interface NewInstanceScreen { name: 'new-instance' }
@@ -166,6 +168,7 @@ export interface DatabaseDetailScreen { name: 'database-detail'; instance: Insta
 export interface ProvisionAppScreen    { name: 'provision-app';    instance: Instance }
 export interface RemoteAccessScreen    { name: 'remote-access';    instance: Instance }
 export interface HostedSetupScreen     { name: 'hosted-setup';     instance: Instance }
+export interface CloudflareTunnelScreen { name: 'cloudflare-tunnel'; instance: Instance }
 
 export type ScreenDef =
   | HomeScreen
@@ -181,4 +184,5 @@ export type ScreenDef =
   | DatabaseDetailScreen
   | ProvisionAppScreen
   | RemoteAccessScreen
-  | HostedSetupScreen;
+  | HostedSetupScreen
+  | CloudflareTunnelScreen;

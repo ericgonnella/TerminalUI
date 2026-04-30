@@ -17,6 +17,7 @@ const LABELS: Record<ScreenDef['name'], string> = {
   'provision-app':   'Provision App DB',
   'remote-access':   'External Access',
   'hosted-setup':    'Hosted Setup',
+  'cloudflare-tunnel': 'Cloudflare Tunnel',
 };
 
 interface BreadcrumbProps {

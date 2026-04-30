@@ -18,6 +18,7 @@ import { DatabaseDetailScreen }    from './screens/DatabaseDetailScreen';
 import { ProvisionAppScreen }      from './screens/ProvisionAppScreen';
 import { RemoteAccessScreen }      from './screens/RemoteAccessScreen';
 import { HostedSetupScreen }       from './screens/HostedSetupScreen';
+import { CloudflareTunnelScreen }  from './screens/CloudflareTunnelScreen';
 import { detectPostgres }     from './services/pgDetect';
 
 interface AppProps {
@@ -154,6 +155,13 @@ export const App: React.FC<AppProps> = ({ pgCtlBin: initialPgCtl, initdbBin: ini
           <HostedSetupScreen
             nav={nav}
             instances={instances}
+            instance={screen.instance}
+          />
+        );
+      case 'cloudflare-tunnel':
+        return (
+          <CloudflareTunnelScreen
+            nav={nav}
             instance={screen.instance}
           />
         );
