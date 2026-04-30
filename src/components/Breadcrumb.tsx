@@ -15,6 +15,7 @@ const LABELS: Record<ScreenDef['name'], string> = {
   'download-pg':     'Get PostgreSQL',
   'database-detail': 'Database Info',
   'provision-app':   'Provision App DB',
+  'remote-access':   'External Access',
 };
 
 interface BreadcrumbProps {

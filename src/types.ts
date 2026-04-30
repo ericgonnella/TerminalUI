@@ -55,6 +55,50 @@ export interface Instance {
   passwordChangedAt?: string;
   /** PostgreSQL version used to initialise this instance, e.g. "17.4". Set at creation time. */
   pgVersion?: string;
+  /** External / remote access configuration. See RemoteAccessConfig.
+   *  Persisted to config.json — contains no secrets, only IP allow-lists and
+   *  paths to user-managed tunnel service files. */
+  remoteAccess?: RemoteAccessConfig;
+}
+
+// ─── External / Remote Access ─────────────────────────────────────────────────
+
+/** A single client allow-list entry. CIDR is normalised — bare IPs become /32 (v4) or /128 (v6). */
+export interface CidrEntry {
+  cidr:    string;
+  addedAt: string;
+}
+
+/** A reverse SSH tunnel published from the pgmanager host to a remote machine.
+ *  Service file lives on the pgmanager host (systemd unit / launchd plist /
+ *  Windows scheduled task) and opens an SSH connection out to `remoteHost`,
+ *  binding `remotePort` there back to PostgreSQL on 127.0.0.1:<instance.port>. */
+export interface SshTunnelEntry {
+  /** SSH user on the remote host. */
+  sshUser:         string;
+  /** Reachable hostname or IP of the remote machine that needs DB access. */
+  remoteHost:      string;
+  /** SSH port on the remote host. Default 22. */
+  sshPort:         number;
+  /** Port that will be opened on the remote host (bound to 127.0.0.1 there). */
+  remotePort:      number;
+  /** Path to the service file we generated on the pgmanager host. */
+  serviceFilePath?: string;
+  /** Service / unit / scheduled task name registered with the OS supervisor. */
+  serviceName?:    string;
+  configuredAt:    string;
+}
+
+export interface RemoteAccessConfig {
+  /** Direct TCP allow-list — applied to pg_hba.conf and the host firewall. */
+  directCidrs:        CidrEntry[];
+  /** Reverse SSH tunnel definitions. */
+  sshTunnels:         SshTunnelEntry[];
+  /** True once we have edited postgresql.conf to bind on all interfaces.
+   *  Used to decide whether a restart (rather than a reload) is needed when
+   *  applying further changes. */
+  listenAllUpdated:   boolean;
+  lastUpdatedAt?:     string;
 }
 
 export interface DatabaseInfo {
@@ -105,7 +149,8 @@ export type ScreenName =
   | 'query'
   | 'download-pg'
   | 'database-detail'
-  | 'provision-app';
+  | 'provision-app'
+  | 'remote-access';
 
 export interface HomeScreen       { name: 'home' }
 export interface NewInstanceScreen { name: 'new-instance' }
@@ -119,6 +164,7 @@ export interface QueryScreen         { name: 'query';           instance: Instan
 export interface DownloadPgScreen    { name: 'download-pg' }
 export interface DatabaseDetailScreen { name: 'database-detail'; instance: Instance; database: string }
 export interface ProvisionAppScreen    { name: 'provision-app';    instance: Instance }
+export interface RemoteAccessScreen    { name: 'remote-access';    instance: Instance }
 
 export type ScreenDef =
   | HomeScreen
@@ -132,4 +178,5 @@ export type ScreenDef =
   | QueryScreen
   | DownloadPgScreen
   | DatabaseDetailScreen
-  | ProvisionAppScreen;
+  | ProvisionAppScreen
+  | RemoteAccessScreen;

@@ -17,7 +17,7 @@ import type { Navigation }     from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
 import type { Instance, InstallationType, LogEntry } from '../types';
 
-type Step = 'version' | 'placement' | 'name' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
+type Step = 'version' | 'placement' | 'name' | 'superuser' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
 type Phase = 'idle' | 'initdb' | 'configuring' | 'starting' | 'verifying' | 'complete';
 
 let _logId = 1;
@@ -44,6 +44,8 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   const [step,            setStep]           = useState<Step>('placement');
   const [placement,       setPlacement]      = useState<InstallationType>('local');
   const [name,            setName]           = useState('');
+  const [superuser,       setSuperuser]      = useState('postgres');
+  const [superuserError,  setSuperuserError] = useState<string | null>(null);
   const [port,            setPort]           = useState('');
   const [portError,       setPortError]      = useState<string | null>(null);
   const [password,        setPassword]       = useState('');
@@ -140,8 +142,36 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
     const { freePort, defaultDir } = await resolveDefaults(trimmed);
     setPort(freePort);
     setDataDir(defaultDir);
-    setStep('port');
+    setStep('superuser');
   }, [resolveDefaults]);
+
+  /**
+   * Validate the bootstrap superuser name. PostgreSQL role names must start
+   * with a letter or underscore and may contain letters, digits and
+   * underscores. We also forbid pg_* (reserved by PostgreSQL itself).
+   */
+  const handleSuperuserSubmit = useCallback((value: string) => {
+    const v = value.trim();
+    if (!v) {
+      setSuperuserError('Superuser name is required.');
+      return;
+    }
+    if (v.length > 63) {
+      setSuperuserError('Superuser name must be 63 characters or fewer.');
+      return;
+    }
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v)) {
+      setSuperuserError('Use letters, digits and underscores only; must start with a letter or underscore.');
+      return;
+    }
+    if (/^pg_/i.test(v)) {
+      setSuperuserError('Names starting with "pg_" are reserved by PostgreSQL.');
+      return;
+    }
+    setSuperuserError(null);
+    setSuperuser(v);
+    setStep('port');
+  }, []);
 
   const handlePortSubmit = useCallback((value: string) => {
     const check = validatePort(value);
@@ -215,7 +245,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       name:        name,
       port:        portNum,
       dataDir:     dir,
-      superuser:   'postgres',
+      superuser:   superuser,
       createdAt:   new Date().toISOString(),
       hasPassword: password.length > 0,
       password:    password || undefined,
@@ -226,7 +256,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
 
     appendLog(makeLog('INFO', `Initialising data directory: ${dir}`));
     appendLog(makeLog('DEBUG', `initdb: ${activeInitdb}`));
-    const initRes = await initDb(activeInitdb, dir, 'postgres', line => {
+    const initRes = await initDb(activeInitdb, dir, superuser, line => {
       appendLog(makeLog('DEBUG', line));
     }, password || undefined);
 
@@ -278,7 +308,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
     setCreatedInstance(instance);
     setPhase('complete');
     setStep('done');
-  }, [name, port, password, dataDir, activePgCtl, activeInitdb, instances, appendLog, placement]);
+  }, [name, superuser, port, password, dataDir, activePgCtl, activeInitdb, instances, appendLog, placement, pgVersion]);
 
   const poppedRef = useRef(false);
 
@@ -353,6 +383,23 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
         nav.push({ name: 'download-pg' });
         return;
       }
+      // For HOSTED placement, Enter continues into the remote-access wizard.
+      // Hosted instances are explicitly intended to be reachable from off-host,
+      // so we treat remote access as the natural next step rather than an extra.
+      if (step === 'done' && createdInstance && placement === 'hosted' && key.return) {
+        poppedRef.current = true;
+        nav.pop();
+        nav.push({ name: 'remote-access', instance: createdInstance });
+        return;
+      }
+      // [X] → set up external / remote access for the freshly-created instance
+      // (still available for local instances that the user later wants to expose)
+      if (step === 'done' && createdInstance && (input === 'x' || input === 'X')) {
+        poppedRef.current = true;
+        nav.pop();
+        nav.push({ name: 'remote-access', instance: createdInstance });
+        return;
+      }
       poppedRef.current = true;
       nav.pop();
       return;
@@ -423,10 +470,11 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan" dimColor>
             {'Step '}
-            {step === 'name' ? '1' :
-             step === 'port' ? '2' :
-             (step === 'password' || step === 'password-confirm') ? '3' : '4'}
-            {' of 4'}
+            {step === 'name'      ? '1' :
+             step === 'superuser' ? '2' :
+             step === 'port'      ? '3' :
+             (step === 'password' || step === 'password-confirm') ? '4' : '5'}
+            {' of 5'}
             {step === 'password-confirm' ? '  (confirm password)' : ''}
             {'   \u2014   '}
             <Text color={placement === 'hosted' ? 'yellow' : 'green'} bold>
@@ -451,7 +499,36 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
             )}
           </Box>
 
-          {/* Step 2 — Port */}
+          {/* Step 2 — Superuser */}
+          {(step === 'superuser' || step === 'port' || step === 'password' || step === 'password-confirm' || step === 'datadir' || step === 'running' || step === 'error') && (
+            <Box flexDirection="column">
+              <Box flexDirection="row">
+                <Text color={step === 'superuser' ? 'white' : 'gray'} bold={step === 'superuser'}>
+                  {'Superuser:      '}
+                </Text>
+                {step === 'superuser' ? (
+                  <TextInput
+                    value={superuser}
+                    onChange={v => { setSuperuser(v); if (superuserError) setSuperuserError(null); }}
+                    onSubmit={handleSuperuserSubmit}
+                    placeholder="postgres"
+                  />
+                ) : (
+                  <Text color="green">{superuser}</Text>
+                )}
+              </Box>
+              {step === 'superuser' && !superuserError && (
+                <Text color="gray" dimColor>
+                  {'  Bootstrap role created by initdb. Letters, digits, underscores; must start with a letter or _.'}
+                </Text>
+              )}
+              {!!superuserError && step === 'superuser' && (
+                <Text color="red">{'  ✗ '}{superuserError}</Text>
+              )}
+            </Box>
+          )}
+
+          {/* Step 3 — Port */}
           {(step === 'port' || step === 'password' || step === 'password-confirm' || step === 'datadir' || step === 'running' || step === 'error') && (
             <Box flexDirection="column">
               <Box flexDirection="row">
@@ -622,7 +699,36 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
             <Text color="gray">{'psql:'}</Text>
             <Text color="cyan">{`  psql -h 127.0.0.1 -p ${createdInstance.port} -U ${createdInstance.superuser} -d postgres`}</Text>
           </Box>
-          <Text color="gray" dimColor>{'Press any key to return to Home.'}</Text>
+          <Box marginTop={1} flexDirection="column">
+            {placement === 'hosted' ? (
+              <>
+                <Box borderStyle="round" borderColor="yellow" paddingX={2} flexDirection="column">
+                  <Text color="yellow" bold>{'⚠  Hosted instance — remote access not yet configured'}</Text>
+                  <Text color="white">
+                    {'PostgreSQL is currently bound to '}
+                    <Text color="cyan" bold>{'127.0.0.1'}</Text>
+                    {' only. To accept connections from other machines you need to allow specific IPs (Direct TCP) or expose it through an SSH reverse tunnel.'}
+                  </Text>
+                </Box>
+                <Box marginTop={1}>
+                  <Text color="green" bold>{'[Enter] '}</Text>
+                  <Text color="white">{'Continue to remote-access setup'}</Text>
+                </Box>
+                <Box>
+                  <Text color="gray" bold>{'[Esc / any key] '}</Text>
+                  <Text color="gray">{'Skip for now — return to Home (you can configure it later from the instance screen)'}</Text>
+                </Box>
+              </>
+            ) : (
+              <>
+                <Box>
+                  <Text color="yellow" bold>{'[X] '}</Text>
+                  <Text color="white">{'Set up external access (allow remote IPs or expose via SSH tunnel)'}</Text>
+                </Box>
+                <Text color="gray" dimColor>{'Press any other key to return to Home.'}</Text>
+              </>
+            )}
+          </Box>
         </Box>
       )}
 

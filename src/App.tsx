@@ -16,6 +16,7 @@ import { QueryScreen }        from './screens/QueryScreen';
 import { DownloadPgScreen }        from './screens/DownloadPgScreen';
 import { DatabaseDetailScreen }    from './screens/DatabaseDetailScreen';
 import { ProvisionAppScreen }      from './screens/ProvisionAppScreen';
+import { RemoteAccessScreen }      from './screens/RemoteAccessScreen';
 import { detectPostgres }     from './services/pgDetect';
 
 interface AppProps {
@@ -136,6 +137,15 @@ export const App: React.FC<AppProps> = ({ pgCtlBin: initialPgCtl, initdbBin: ini
           <ProvisionAppScreen
             nav={nav}
             instance={screen.instance}
+          />
+        );
+      case 'remote-access':
+        return (
+          <RemoteAccessScreen
+            nav={nav}
+            instances={instances}
+            instance={screen.instance}
+            pgCtlBin={pgCtlBin}
           />
         );
       default:

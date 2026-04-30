@@ -133,6 +133,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
     if (input === 'd' || input === 'D') setConfirmDel(true);
     if (input === 'u' || input === 'U') nav.push({ name: 'users', instance });
     if (input === 'a' || input === 'A') nav.push({ name: 'provision-app', instance });
+    if (input === 'x' || input === 'X') nav.push({ name: 'remote-access', instance });
     if (input === 'm' || input === 'M') {
       if (dbs[selected]) nav.push({ name: 'migrations', instance, database: dbs[selected]!.name });
     }
@@ -161,6 +162,21 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
           <Text color="gray" dimColor>{'Data: '}</Text>
           <Text color="gray">{instance.dataDir}</Text>
         </Box>
+        {!!instance.remoteAccess && (
+          ((instance.remoteAccess.directCidrs?.length ?? 0) > 0 ||
+           (instance.remoteAccess.sshTunnels?.length  ?? 0) > 0) && (
+            <Box flexDirection="row">
+              <Text color="gray" dimColor>{'Remote: '}</Text>
+              <Text color={(instance.remoteAccess.directCidrs?.length ?? 0) > 0 ? 'yellow' : 'gray'}>
+                {`${instance.remoteAccess.directCidrs?.length ?? 0} direct CIDR(s)`}
+              </Text>
+              <Text color="gray" dimColor>{'   '}</Text>
+              <Text color={(instance.remoteAccess.sshTunnels?.length ?? 0) > 0 ? 'yellow' : 'gray'}>
+                {`${instance.remoteAccess.sshTunnels?.length ?? 0} SSH tunnel(s)`}
+              </Text>
+            </Box>
+          )
+        )}
       </Box>
 
       {!!opMsg && <Box marginBottom={1}><Text color="gray" dimColor>{`  ${opMsg}`}</Text></Box>}
@@ -245,6 +261,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
         { key: 'S',     label: 'start/stop' },
         { key: 'U',     label: 'users'      },
         { key: 'A',     label: 'app db'     },
+        { key: 'X',     label: 'external'   },
         { key: 'M',     label: 'migrations' },
         { key: 'D',     label: 'delete'     },
         { key: 'Esc',   label: 'back'       },
