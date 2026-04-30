@@ -17,6 +17,7 @@ import { DownloadPgScreen }        from './screens/DownloadPgScreen';
 import { DatabaseDetailScreen }    from './screens/DatabaseDetailScreen';
 import { ProvisionAppScreen }      from './screens/ProvisionAppScreen';
 import { RemoteAccessScreen }      from './screens/RemoteAccessScreen';
+import { HostedSetupScreen }       from './screens/HostedSetupScreen';
 import { detectPostgres }     from './services/pgDetect';
 
 interface AppProps {
@@ -146,6 +147,14 @@ export const App: React.FC<AppProps> = ({ pgCtlBin: initialPgCtl, initdbBin: ini
             instances={instances}
             instance={screen.instance}
             pgCtlBin={pgCtlBin}
+          />
+        );
+      case 'hosted-setup':
+        return (
+          <HostedSetupScreen
+            nav={nav}
+            instances={instances}
+            instance={screen.instance}
           />
         );
       default:

@@ -16,6 +16,7 @@ const LABELS: Record<ScreenDef['name'], string> = {
   'database-detail': 'Database Info',
   'provision-app':   'Provision App DB',
   'remote-access':   'External Access',
+  'hosted-setup':    'Hosted Setup',
 };
 
 interface BreadcrumbProps {

@@ -383,13 +383,14 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
         nav.push({ name: 'download-pg' });
         return;
       }
-      // For HOSTED placement, Enter continues into the remote-access wizard.
-      // Hosted instances are explicitly intended to be reachable from off-host,
-      // so we treat remote access as the natural next step rather than an extra.
+      // For HOSTED placement, Enter continues into the GUIDED HOSTED setup
+      // wizard, which produces a tailored bash script for the VPS plus a
+      // live connection test. Hosted instances are explicitly intended to be
+      // reachable from off-host, so we treat this as the natural next step.
       if (step === 'done' && createdInstance && placement === 'hosted' && key.return) {
         poppedRef.current = true;
         nav.pop();
-        nav.push({ name: 'remote-access', instance: createdInstance });
+        nav.push({ name: 'hosted-setup', instance: createdInstance });
         return;
       }
       // [X] → set up external / remote access for the freshly-created instance
@@ -712,7 +713,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
                 </Box>
                 <Box marginTop={1}>
                   <Text color="green" bold>{'[Enter] '}</Text>
-                  <Text color="white">{'Continue to remote-access setup'}</Text>
+                  <Text color="white">{'Continue to guided hosted setup'}</Text>
                 </Box>
                 <Box>
                   <Text color="gray" bold>{'[Esc / any key] '}</Text>

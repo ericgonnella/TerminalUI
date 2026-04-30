@@ -165,6 +165,7 @@ export interface DownloadPgScreen    { name: 'download-pg' }
 export interface DatabaseDetailScreen { name: 'database-detail'; instance: Instance; database: string }
 export interface ProvisionAppScreen    { name: 'provision-app';    instance: Instance }
 export interface RemoteAccessScreen    { name: 'remote-access';    instance: Instance }
+export interface HostedSetupScreen     { name: 'hosted-setup';     instance: Instance }
 
 export type ScreenDef =
   | HomeScreen
@@ -179,4 +180,5 @@ export type ScreenDef =
   | DownloadPgScreen
   | DatabaseDetailScreen
   | ProvisionAppScreen
-  | RemoteAccessScreen;
+  | RemoteAccessScreen
+  | HostedSetupScreen;
