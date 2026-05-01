@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
+﻿import React, { useEffect, useState, useCallback } from 'react';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -31,6 +32,7 @@ type Step =
   | 'allow-list'
   | 'add-entry'
   | 'review'
+  | 'running-script'
   | 'await-run'
   | 'testing'
   | 'success'
@@ -54,16 +56,21 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
   const [detecting,   setDetecting]   = useState(true);
   const [detectedIp,  setDetectedIp]  = useState<string | null>(null);
 
-  // Allow-list state — pre-seeded with the user's public IP once detected.
+  // Allow-list state â€” pre-seeded with the user's public IP once detected.
   const [allowList, setAllowList] = useState<string[]>([]);
   const [entryInput, setEntryInput] = useState('');
   const [entryError, setEntryError] = useState<string | null>(null);
 
   // Built script + probe results
-  const [built,     setBuilt]     = useState<BuiltScript | null>(null);
-  const [savedPath, setSavedPath] = useState<string | null>(null);
-  const [probe,  setProbe]  = useState<ProbeResult | null>(null);
-  const [resolved, setResolved] = useState<string | null>(null);
+  const [built,        setBuilt]        = useState<BuiltScript | null>(null);
+  const [savedPath,    setSavedPath]    = useState<string | null>(null);
+  const [probe,        setProbe]        = useState<ProbeResult | null>(null);
+  const [resolved,     setResolved]     = useState<string | null>(null);
+
+  // Local script execution state
+  const [scriptLines,    setScriptLines]    = useState<string[]>([]);
+  const [scriptRunning,  setScriptRunning]  = useState(false);
+  const [scriptExitCode, setScriptExitCode] = useState<number | null>(null);
 
   // Detect public IP once on mount.
   useEffect(() => {
@@ -74,7 +81,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       setDetectedIp(ip);
       setDetecting(false);
       if (ip) {
-        // Convert to /32 (or /128) so it's a valid CIDR — pg_hba accepts both.
+        // Convert to /32 (or /128) so it's a valid CIDR â€” pg_hba accepts both.
         const suffix = ip.includes(':') ? '/128' : '/32';
         setAllowList(prev => prev.length === 0 ? [`${ip}${suffix}`] : prev);
       }
@@ -99,6 +106,55 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
     } catch (err: any) {
       setSavedPath(`(error saving: ${String(err?.message ?? err)})`);
     }
+  }, [built, instance.id]);
+
+  // True when pgmanager is running directly on the VPS (local postgres, non-Windows).
+  // In that case the wizard can execute the script in-process instead of asking the
+  // user to copy-paste it over SSH.
+  const canRunLocal = process.platform !== 'win32' &&
+    ['127.0.0.1', 'localhost', '::1'].includes(instance.host ?? '127.0.0.1');
+
+  const runScriptLocally = useCallback(() => {
+    if (!built) return;
+    const fname = `pgmsetup-${instance.id}.sh`;
+    const fpath = path.join(os.tmpdir(), fname);
+    try {
+      fs.writeFileSync(fpath, built.script, { encoding: 'utf8', mode: 0o700 });
+      setSavedPath(fpath);
+    } catch (err: any) {
+      setScriptLines([`Error: could not write script â€” ${String(err?.message ?? err)}`]);
+      setScriptRunning(false);
+      setScriptExitCode(1);
+      setStep('running-script');
+      return;
+    }
+    setScriptLines([]);
+    setScriptRunning(true);
+    setScriptExitCode(null);
+    setStep('running-script');
+    const proc = spawn('bash', [fpath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let outBuf = '';
+    let errBuf = '';
+    const pushLine = (line: string) =>
+      setScriptLines(prev => [...prev, line].slice(-100));
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      outBuf += chunk.toString('utf8');
+      const parts = outBuf.split('\n');
+      outBuf = parts.pop() ?? '';
+      parts.forEach(l => pushLine(l));
+    });
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      errBuf += chunk.toString('utf8');
+      const parts = errBuf.split('\n');
+      errBuf = parts.pop() ?? '';
+      parts.forEach(l => pushLine(`[err] ${l}`));
+    });
+    proc.on('close', (code: number | null) => {
+      if (outBuf) pushLine(outBuf);
+      if (errBuf) pushLine(`[err] ${errBuf}`);
+      setScriptRunning(false);
+      setScriptExitCode(code ?? 1);
+    });
   }, [built, instance.id]);
 
   const buildAndShow = useCallback(() => {
@@ -127,6 +183,13 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
     }
   }, [instance, allowList, persistApplied]);
 
+  // Auto-advance to the TCP test once the local script completes successfully.
+  useEffect(() => {
+    if (step !== 'running-script' || scriptRunning || scriptExitCode !== 0) return;
+    const t = setTimeout(() => { void runTest(); }, 2000);
+    return () => clearTimeout(t);
+  }, [step, scriptRunning, scriptExitCode, runTest]);
+
   // Keyboard router
   useInput((input, key) => {
     if (step === 'welcome') {
@@ -147,8 +210,21 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
     }
     if (step === 'review') {
       if (input === 's' || input === 'S') { saveScript(); return; }
-      if (key.return) { setStep('await-run'); return; }
+      if (canRunLocal) {
+        if (key.return) { runScriptLocally(); return; }
+        if (input === 'm' || input === 'M') { setStep('await-run'); return; }
+      } else {
+        if (key.return) { setStep('await-run'); return; }
+      }
       if (key.escape) { setStep('allow-list'); return; }
+      return;
+    }
+    if (step === 'running-script') {
+      if (scriptRunning) return;
+      if (scriptExitCode !== 0) {
+        if (input === 'r' || input === 'R') { runScriptLocally(); return; }
+        if (key.escape) { setStep('review'); return; }
+      }
       return;
     }
     if (step === 'await-run') {
@@ -179,7 +255,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
     setStep('allow-list');
   }, []);
 
-  // ─── Render ────────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const host = instance.host ?? '127.0.0.1';
 
@@ -188,7 +264,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="magenta" paddingX={2} flexDirection="column">
           <Text color="magenta" bold>{'Guided Hosted Setup'}</Text>
-          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'â”€'.repeat(56)}</Text>
           <Text color="white">
             {'This wizard configures '}
             <Text color="cyan" bold>{instance.name}</Text>
@@ -202,12 +278,12 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
             <Text color="white">{'  4. Test the live TCP connection and persist the result'}</Text>
           </Box>
           <Box marginTop={1} flexDirection="column">
-            <Text color="yellow" bold>{'⚠  Important — Netlify / serverless apps'}</Text>
+            <Text color="yellow" bold>{'âš   Important â€” Netlify / serverless apps'}</Text>
             <Text color={mutedColor}>{'   Netlify Functions egress from a wide, dynamic AWS IP range, so a tight'}</Text>
             <Text color={mutedColor}>{'   CIDR allow-list will not reliably reach your DB. For production with'}</Text>
             <Text color={mutedColor}>{'   eric-weightloss.netlify.app or similar, use one of:'}</Text>
-            <Text color={mutedColor}>{'     • A managed pooler / proxy in front (Supabase pooler, PgBouncer + Cloudflare Tunnel, Neon)'}</Text>
-            <Text color={mutedColor}>{'     • Or 0.0.0.0/0 + scram-sha-256 + a strong password (TLS recommended)'}</Text>
+            <Text color={mutedColor}>{'     â€¢ A managed pooler / proxy in front (Supabase pooler, PgBouncer + Cloudflare Tunnel, Neon)'}</Text>
+            <Text color={mutedColor}>{'     â€¢ Or 0.0.0.0/0 + scram-sha-256 + a strong password (TLS recommended)'}</Text>
           </Box>
           <Box marginTop={1}>
             <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'continue   '}</Text>
@@ -222,28 +298,28 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
     return (
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
-          <Text color="cyan" bold>{'Step 1 of 4 — Who is allowed to connect?'}</Text>
-          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
+          <Text color="cyan" bold>{'Step 1 of 4 â€” Who is allowed to connect?'}</Text>
+          <Text color={mutedColor}>{'â”€'.repeat(56)}</Text>
           {detecting && (
             <Box>
               <Text color="yellow"><Spinner type="dots" /></Text>
-              <Text color={mutedColor}>{'  Detecting your public IP…'}</Text>
+              <Text color={mutedColor}>{'  Detecting your public IPâ€¦'}</Text>
             </Box>
           )}
           {!detecting && detectedIp && (
-            <Text color="green">{`✓ Detected your public IP: ${detectedIp}`}</Text>
+            <Text color="green">{`âœ“ Detected your public IP: ${detectedIp}`}</Text>
           )}
           {!detecting && !detectedIp && (
-            <Text color="yellow">{'⚠  Could not auto-detect public IP — add an entry manually with [A].'}</Text>
+            <Text color="yellow">{'âš   Could not auto-detect public IP â€” add an entry manually with [A].'}</Text>
           )}
           <Box marginTop={1} flexDirection="column">
             <Text color={mutedColor}>{'Allow-list entries:'}</Text>
             {allowList.length === 0 && (
-              <Text color="red">{'  (empty — at least one entry required)'}</Text>
+              <Text color="red">{'  (empty â€” at least one entry required)'}</Text>
             )}
             {allowList.map((v, i) => (
               <Box key={`${i}-${v}`}>
-                <Text color="cyan">{'  • '}</Text>
+                <Text color="cyan">{'  â€¢ '}</Text>
                 <Text color="white">{v}</Text>
               </Box>
             ))}
@@ -264,8 +340,8 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Text color="cyan" bold>{'Add allow-list entry'}</Text>
-          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
-          <Text color={mutedColor}>{'Examples: 203.0.113.5 — 198.51.100.0/24 — home.example.com — 2001:db8::/32'}</Text>
+          <Text color={mutedColor}>{'â”€'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'Examples: 203.0.113.5 â€” 198.51.100.0/24 â€” home.example.com â€” 2001:db8::/32'}</Text>
           <Box marginTop={1}>
             <Text color="cyan">{'> '}</Text>
             <TextInput
@@ -286,21 +362,27 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
 
   if (step === 'review' && built) {
     const target = `${instance.superuser}@${host}`;
+    const previewLines = built.script.split('\n');
+    const PREVIEW = canRunLocal ? 30 : 60;
     return (
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
-          <Text color="cyan" bold>{'Step 2 of 4 — Run this on your VPS'}</Text>
+          <Text color="cyan" bold>{'Step 2 of 4 — Review & run script'}</Text>
           <Text color={mutedColor}>{'─'.repeat(56)}</Text>
-          <Text color="white">{'Open a terminal on a machine with SSH access to the VPS and paste:'}</Text>
+          {canRunLocal ? (
+            <Text color="white">{'Press '}<Text color="green" bold>{'[Enter]'}</Text>{' to run this script now on this machine (requires sudo for postgresql + firewall):'}</Text>
+          ) : (
+            <Text color="white">{'Open a terminal on a machine with SSH access to the VPS and paste:'}</Text>
+          )}
           <Box marginTop={1} flexDirection="column" borderStyle="single" borderColor={mutedColor} paddingX={1}>
-            <Text color="green">{`ssh ${target} 'bash -s' <<'PGMSETUP'`}</Text>
-            {built.script.split('\n').slice(0, 60).map((line, i) => (
+            {!canRunLocal && <Text color="green">{`ssh ${target} 'bash -s' <<'PGMSETUP'`}</Text>}
+            {previewLines.slice(0, PREVIEW).map((line, i) => (
               <Text key={i} color={mutedColor}>{line}</Text>
             ))}
-            {built.script.split('\n').length > 60 && (
-              <Text color="yellow">{`  … (${built.script.split('\n').length - 60} more lines — full script is generated, copy from your terminal scroll-back if needed) …`}</Text>
+            {previewLines.length > PREVIEW && (
+              <Text color="yellow">{`  … (${previewLines.length - PREVIEW} more lines — press [S] to save the full script) …`}</Text>
             )}
-            <Text color="green">{'PGMSETUP'}</Text>
+            {!canRunLocal && <Text color="green">{'PGMSETUP'}</Text>}
           </Box>
           <Box marginTop={1} flexDirection="column">
             <Text color={mutedColor}>{'What this does (idempotent — safe to re-run):'}</Text>
@@ -315,21 +397,67 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
             </Box>
           )}
           <Box marginTop={1}>
-            <Text color="cyan" bold>{'[S] '}</Text><Text color="white">{'save script to file   '}</Text>
-            <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'I have run it — go to test   '}</Text>
-            <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'edit allow-list'}</Text>
+            {canRunLocal ? (
+              <>
+                <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'run script now   '}</Text>
+                <Text color="yellow" bold>{'[M] '}</Text><Text color="white">{'run manually (SSH)   '}</Text>
+                <Text color="cyan" bold>{'[S] '}</Text><Text color="white">{'save to file   '}</Text>
+                <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'edit allow-list'}</Text>
+              </>
+            ) : (
+              <>
+                <Text color="cyan" bold>{'[S] '}</Text><Text color="white">{'save script to file   '}</Text>
+                <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'I have run it — go to test   '}</Text>
+                <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'edit allow-list'}</Text>
+              </>
+            )}
           </Box>
         </Box>
       </Box>
     );
   }
+  if (step === 'running-script') {
+    const displayLines = scriptLines.slice(-20);
+    const borderColor = scriptRunning ? 'cyan' : scriptExitCode === 0 ? 'green' : 'red';
+    return (
+      <Box flexDirection="column">
+        <Box borderStyle="round" borderColor={borderColor} paddingX={2} flexDirection="column">
+          {scriptRunning && (
+            <Box>
+              <Text color="yellow"><Spinner type="dots" /></Text>
+              <Text color="cyan" bold>{'  Running setup script\u2026'}</Text>
+            </Box>
+          )}
+          {!scriptRunning && scriptExitCode === 0 && (
+            <Text color="green" bold>{'\u2713 Script completed \u2014 starting connection test in 2s\u2026'}</Text>
+          )}
+          {!scriptRunning && scriptExitCode !== 0 && (
+            <Text color="red" bold>{`\u2717 Script exited with code ${scriptExitCode ?? '?'}`}</Text>
+          )}
+          <Text color={mutedColor}>{'\u2500'.repeat(56)}</Text>
+          <Box flexDirection="column">
+            {displayLines.map((line, i) => (
+              <Text key={i} color={line.startsWith('[err]') ? 'yellow' : mutedColor}>{line}</Text>
+            ))}
+          </Box>
+          {!scriptRunning && scriptExitCode !== 0 && (
+            <Box marginTop={1}>
+              <Text color="green" bold>{'[R] '}</Text><Text color="white">{'retry   '}</Text>
+              <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'back to review'}</Text>
+            </Box>
+          )}
+        </Box>
+      </Box>
+    );
+  }
+
 
   if (step === 'await-run') {
     return (
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
-          <Text color="cyan" bold>{'Step 3 of 4 — Test connection'}</Text>
-          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
+          <Text color="cyan" bold>{'Step 3 of 4 â€” Test connection'}</Text>
+          <Text color={mutedColor}>{'â”€'.repeat(56)}</Text>
           <Text color="white">
             {'Press '}<Text color="green" bold>{'[Enter]'}</Text>
             {` to probe TCP ${host}:${instance.port} from this machine.`}
@@ -346,7 +474,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Box>
             <Text color="yellow"><Spinner type="dots" /></Text>
-            <Text color={mutedColor}>{`  Probing ${host}:${instance.port}…`}</Text>
+            <Text color={mutedColor}>{`  Probing ${host}:${instance.port}â€¦`}</Text>
           </Box>
         </Box>
       </Box>
@@ -357,16 +485,16 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
     return (
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="green" paddingX={2} flexDirection="column">
-          <Text color="green" bold>{'✓  Step 4 of 4 — Connection successful'}</Text>
-          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
+          <Text color="green" bold>{'âœ“  Step 4 of 4 â€” Connection successful'}</Text>
+          <Text color={mutedColor}>{'â”€'.repeat(56)}</Text>
           <Text color="white">{`TCP handshake on ${host}:${instance.port} took ${probe.durationMs}ms.`}</Text>
-          {!!resolved && <Text color={mutedColor}>{`  Resolved ${host} → ${resolved}`}</Text>}
+          {!!resolved && <Text color={mutedColor}>{`  Resolved ${host} â†’ ${resolved}`}</Text>}
           <Box marginTop={1} flexDirection="column">
-            <Text color={mutedColor}>{'Next — verify auth from a real psql client:'}</Text>
+            <Text color={mutedColor}>{'Next â€” verify auth from a real psql client:'}</Text>
             <Text color="cyan">{`  psql -h ${host} -p ${instance.port} -U ${instance.superuser} -d postgres`}</Text>
           </Box>
           <Box marginTop={1} flexDirection="column">
-            <Text color="green">{`✓ Persisted ${allowList.length} allow-list entry(ies). Press [I] on Home to view.`}</Text>
+            <Text color="green">{`âœ“ Persisted ${allowList.length} allow-list entry(ies). Press [I] on Home to view.`}</Text>
           </Box>
           <Box marginTop={1}>
             <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'done'}</Text>
@@ -380,17 +508,17 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
     return (
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="red" paddingX={2} flexDirection="column">
-          <Text color="red" bold>{`✗  Connection failed (${probe.code})`}</Text>
-          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
+          <Text color="red" bold>{`âœ—  Connection failed (${probe.code})`}</Text>
+          <Text color={mutedColor}>{'â”€'.repeat(56)}</Text>
           <Text color="white">{probe.message}</Text>
-          {!!resolved && <Text color={mutedColor}>{`  Resolved ${host} → ${resolved}`}</Text>}
+          {!!resolved && <Text color={mutedColor}>{`  Resolved ${host} â†’ ${resolved}`}</Text>}
           <Box marginTop={1} flexDirection="column">
             <Text color={mutedColor}>{'Most common causes (in order):'}</Text>
             {probe.code === 'timeout' && (
               <>
-                <Text color="white">{'  1. Cloud provider security group (AWS / GCP / DigitalOcean) — open inbound TCP ' + instance.port}</Text>
-                <Text color="white">{'  2. Host firewall (ufw / firewalld) — the script handles this; did it run as root?'}</Text>
-                <Text color="white">{'  3. listen_addresses still localhost — the script flips it; was postgres reloaded?'}</Text>
+                <Text color="white">{'  1. Cloud provider security group (AWS / GCP / DigitalOcean) â€” open inbound TCP ' + instance.port}</Text>
+                <Text color="white">{'  2. Host firewall (ufw / firewalld) â€” the script handles this; did it run as root?'}</Text>
+                <Text color="white">{'  3. listen_addresses still localhost â€” the script flips it; was postgres reloaded?'}</Text>
               </>
             )}
             {probe.code === 'refused' && (
@@ -401,10 +529,10 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
               </>
             )}
             {probe.code === 'unreachable' && (
-              <Text color="white">{'  Routing problem — the host is offline or unreachable from this network.'}</Text>
+              <Text color="white">{'  Routing problem â€” the host is offline or unreachable from this network.'}</Text>
             )}
             {probe.code === 'dns' && (
-              <Text color="white">{'  DNS lookup failed for the hostname — check the host value on the instance.'}</Text>
+              <Text color="white">{'  DNS lookup failed for the hostname â€” check the host value on the instance.'}</Text>
             )}
             {probe.code === 'other' && (
               <Text color="white">{'  See message above for the OS error code.'}</Text>
