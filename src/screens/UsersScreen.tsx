@@ -9,6 +9,7 @@ import { listDatabases }  from '../services/database';
 import { useAsync }       from '../hooks/useAsync';
 import type { Navigation } from '../hooks/useNavigation';
 import type { UserInfo, DatabaseInfo, Instance } from '../types';
+import { mutedColor } from '../theme';
 
 type Mode = 'list' | 'create-name' | 'create-pass' | 'grant-db' | 'confirm-drop' | 'busy' | 'alter';
 
@@ -162,12 +163,12 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
         <Box>
           <Text bold color="blue">{'NAME                SUPERUSER  REPLICATION  LOGIN'}</Text>
         </Box>
-        <Text color="gray" dimColor>{'─'.repeat(56)}</Text>
+        <Text color={mutedColor}>{'─'.repeat(56)}</Text>
         {rolesState.loading && (
-          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color="gray">{'  Loading...'}</Text></Box>
+          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color={mutedColor}>{'  Loading...'}</Text></Box>
         )}
         {!rolesState.loading && roles.length === 0 && (
-          <Text color="gray" dimColor>{'  No roles found.'}</Text>
+          <Text color={mutedColor}>{'  No roles found.'}</Text>
         )}
         {roles.map((r, i) => {
           const isSel = i === selected;
@@ -177,9 +178,9 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
               <Text color={isSel ? 'cyan' : 'white'} bold={isSel}>
                 {`${isSel ? '▶ ' : '  '}${r.name.padEnd(20)}`}
               </Text>
-              <Text color="gray">{yn(r.superuser).padEnd(11)}</Text>
-              <Text color="gray">{yn(r.replication).padEnd(10)}</Text>
-              <Text color="gray">{yn(r.canLogin)}</Text>
+              <Text color={mutedColor}>{yn(r.superuser).padEnd(11)}</Text>
+              <Text color={mutedColor}>{yn(r.replication).padEnd(10)}</Text>
+              <Text color={mutedColor}>{yn(r.canLogin)}</Text>
             </Box>
           );
         })}
@@ -222,7 +223,7 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
       {mode === 'grant-db' && (
         <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1} marginBottom={1}>
           <Text bold color="yellow">{`Grant access for "${selectedRole?.name ?? ''}" to:`}</Text>
-          <Text color="gray" dimColor>{'─'.repeat(40)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(40)}</Text>
           {dbsState.loading && <Box><Text color="yellow"><Spinner type="dots" /></Text></Box>}
           {dbs.map((db, i) => (
             <Box key={db.name}>
@@ -231,14 +232,14 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
               </Text>
             </Box>
           ))}
-          <Text color="gray" dimColor>{'[Enter] grant  [Esc] cancel'}</Text>
+          <Text color={mutedColor}>{'[Enter] grant  [Esc] cancel'}</Text>
         </Box>
       )}
 
       {mode === 'alter' && selectedRole && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan">{`Edit role: "${selectedRole.name}"`}</Text>
-          <Text color="gray" dimColor>{'─'.repeat(34)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(34)}</Text>
           {EDIT_ATTRS.map((attr, i) => (
             <Box key={attr}>
               <Text color={i === editCursor ? 'cyan' : 'white'} bold={i === editCursor}>
@@ -246,8 +247,8 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
               </Text>
             </Box>
           ))}
-          <Text color="gray" dimColor>{'─'.repeat(34)}</Text>
-          <Text color="gray" dimColor>{'[Space] toggle  [Enter] save  [Esc] cancel'}</Text>
+          <Text color={mutedColor}>{'─'.repeat(34)}</Text>
+          <Text color={mutedColor}>{'[Space] toggle  [Enter] save  [Esc] cancel'}</Text>
         </Box>
       )}
 
@@ -264,7 +265,7 @@ export const UsersScreen: React.FC<UsersScreenProps> = ({ nav, instance }) => {
         <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color="yellow">{'  Working...'}</Text></Box>
       )}
 
-      {!!opMsg && <Box marginBottom={1}><Text color="gray" dimColor>{`  ${opMsg}`}</Text></Box>}
+      {!!opMsg && <Box marginBottom={1}><Text color={mutedColor}>{`  ${opMsg}`}</Text></Box>}
 
       <Keybindings bindings={[
         { key: '↑↓',  label: 'navigate'    },

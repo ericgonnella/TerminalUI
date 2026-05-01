@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { LogEntry } from '../types';
-import { getLevelColor } from '../theme';
+import { getLevelColor, mutedColor } from '../theme';
 
 const LEVEL_LABEL: Record<string, string> = {
   INFO:  'INFO ',
@@ -27,7 +27,7 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({ logs, maxLines = 6 }) 
       </Box>
       <Box borderStyle="round" borderColor="magenta" flexDirection="column" paddingX={1}>
         {visible.length === 0 ? (
-          <Text color="gray" dimColor>
+          <Text color={mutedColor}>
             {'  Waiting for events...'}
           </Text>
         ) : (
@@ -38,12 +38,12 @@ export const ActivityLog: React.FC<ActivityLogProps> = ({ logs, maxLines = 6 }) 
 
             return (
               <Box key={entry.id} flexDirection="row">
-                <Text color="gray" dimColor>{entry.timestamp}</Text>
-                <Text color="gray" dimColor>{'  '}</Text>
+                <Text color={mutedColor}>{entry.timestamp}</Text>
+                <Text color={mutedColor}>{'  '}</Text>
                 <Text color={levelColor} bold>{`[${label}]`}</Text>
-                <Text color="gray" dimColor>{'  '}</Text>
-                <Text color="gray">{svcPad}</Text>
-                <Text color="gray" dimColor>{'  '}</Text>
+                <Text color={mutedColor}>{'  '}</Text>
+                <Text color={mutedColor}>{svcPad}</Text>
+                <Text color={mutedColor}>{'  '}</Text>
                 <Text color="white">{entry.message}</Text>
               </Box>
             );

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { useTerminalSize } from '../hooks/useTerminalSize';
+import { mutedColor } from '../theme';
 
 export interface KeyBinding {
   key:   string;
@@ -69,7 +70,7 @@ export const Keybindings: React.FC<KeybindingsProps> = ({ bindings }) => {
             <Box key={i} flexShrink={0} flexDirection="row" marginRight={2}>
               <Text color="cyan" bold wrap="truncate-end">{`[${b.key}]`}</Text>
               {!compact && (
-                <Text color="gray" wrap="truncate-end">{` ${b.label}`}</Text>
+                <Text color={mutedColor} wrap="truncate-end">{` ${b.label}`}</Text>
               )}
             </Box>
           ))}

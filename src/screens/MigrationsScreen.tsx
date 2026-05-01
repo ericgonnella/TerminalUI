@@ -14,6 +14,7 @@ import { useAsync }      from '../hooks/useAsync';
 import { getInstances, updateMigrationsDir } from '../services/config';
 import type { Navigation }  from '../hooks/useNavigation';
 import type { MigrationRecord, LogEntry, Instance } from '../types';
+import { mutedColor } from '../theme';
 
 type Mode = 'list' | 'set-dir' | 'running' | 'done' | 'error';
 
@@ -120,7 +121,7 @@ export const MigrationsScreen: React.FC<MigrationsScreenProps> = ({
     <Box flexDirection="column">
       {/* Migrations directory */}
       <Box marginBottom={1}>
-        <Text color="gray" dimColor>{'Migrations dir: '}</Text>
+        <Text color={mutedColor}>{'Migrations dir: '}</Text>
         {migrDir ? (
           <Text color="white">{migrDir}</Text>
         ) : (
@@ -143,16 +144,16 @@ export const MigrationsScreen: React.FC<MigrationsScreenProps> = ({
       {/* Applied migrations */}
       <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={1} marginBottom={1}>
         <Text bold color="green">{'APPLIED'}</Text>
-        <Text color="gray" dimColor>{'─'.repeat(50)}</Text>
+        <Text color={mutedColor}>{'─'.repeat(50)}</Text>
         {appliedState.loading && <Box><Text color="yellow"><Spinner type="dots" /></Text></Box>}
         {!appliedState.loading && applied.length === 0 && (
-          <Text color="gray" dimColor>{'  None yet.'}</Text>
+          <Text color={mutedColor}>{'  None yet.'}</Text>
         )}
         {applied.slice(-8).map(m => (
           <Box key={m.filename} flexDirection="row">
             <Text color="green">{'  ✓ '}</Text>
-            <Text color="gray">{m.filename.padEnd(36)}</Text>
-            <Text color="gray" dimColor>{m.appliedAt}</Text>
+            <Text color={mutedColor}>{m.filename.padEnd(36)}</Text>
+            <Text color={mutedColor}>{m.appliedAt}</Text>
           </Box>
         ))}
       </Box>
@@ -160,13 +161,13 @@ export const MigrationsScreen: React.FC<MigrationsScreenProps> = ({
       {/* Pending migrations */}
       <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1} marginBottom={1}>
         <Text bold color="yellow">{'PENDING'}</Text>
-        <Text color="gray" dimColor>{'─'.repeat(50)}</Text>
+        <Text color={mutedColor}>{'─'.repeat(50)}</Text>
         {pendingState.loading && <Box><Text color="yellow"><Spinner type="dots" /></Text></Box>}
         {!pendingState.loading && pending.length === 0 && migrDir && (
-          <Text color="gray" dimColor>{'  All up to date.'}</Text>
+          <Text color={mutedColor}>{'  All up to date.'}</Text>
         )}
         {!pendingState.loading && pending.length === 0 && !migrDir && (
-          <Text color="gray" dimColor>{'  Set migrations directory first.'}</Text>
+          <Text color={mutedColor}>{'  Set migrations directory first.'}</Text>
         )}
         {pending.map((f, i) => {
           const isSel = i === pendingSel;

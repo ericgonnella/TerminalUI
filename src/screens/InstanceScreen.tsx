@@ -4,7 +4,7 @@ import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import { Keybindings }         from '../components/Keybindings';
 import { ConfirmDialog }       from '../components/ConfirmDialog';
-import { getInstanceStatusColor } from '../theme';
+import { getInstanceStatusColor, mutedColor } from '../theme';
 import {
   getInstanceStatus,
   startInstance,
@@ -122,7 +122,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
     if (key.escape && opError) { setOpError(null); return; }
     if (key.upArrow)   setSelected(s => Math.max(0, s - 1));
     if (key.downArrow) setSelected(s => Math.min(dbs.length - 1, s + 1));
-    if (key.escape)    nav.pop();
+    if (key.escape)    { nav.pop(); return; }
     if (input === 'n' || input === 'N') {
       nav.push({ name: 'databases', instance, database: undefined });
     }
@@ -133,6 +133,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
     if (input === 'd' || input === 'D') setConfirmDel(true);
     if (input === 'u' || input === 'U') nav.push({ name: 'users', instance });
     if (input === 'a' || input === 'A') nav.push({ name: 'provision-app', instance });
+    if (input === 'p' || input === 'P') nav.push({ name: 'project-database', instance });
     if (input === 'x' || input === 'X') nav.push({ name: 'remote-access', instance });
     if ((input === 'h' || input === 'H') && instance.installationType === 'hosted') {
       nav.push({ name: 'hosted-setup', instance });
@@ -151,11 +152,11 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
       {/* Info panel */}
       <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
         <Box flexDirection="row" marginBottom={0}>
-          <Text color="gray" dimColor>{'Port: '}</Text>
+          <Text color={mutedColor}>{'Port: '}</Text>
           <Text color="white" bold>{String(instance.port)}</Text>
-          <Text color="gray" dimColor>{'    Superuser: '}</Text>
+          <Text color={mutedColor}>{'    Superuser: '}</Text>
           <Text color="white">{instance.superuser}</Text>
-          <Text color="gray" dimColor>{'    Status: '}</Text>
+          <Text color={mutedColor}>{'    Status: '}</Text>
           {busyOp ? (
             <><Text color="yellow"><Spinner type="dots" /></Text><Text color="yellow">{'  ...'}</Text></>
           ) : (
@@ -163,19 +164,19 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
           )}
         </Box>
         <Box flexDirection="row">
-          <Text color="gray" dimColor>{'Data: '}</Text>
-          <Text color="gray">{instance.dataDir}</Text>
+          <Text color={mutedColor}>{'Data: '}</Text>
+          <Text color={mutedColor}>{instance.dataDir}</Text>
         </Box>
         {!!instance.remoteAccess && (
           ((instance.remoteAccess.directCidrs?.length ?? 0) > 0 ||
            (instance.remoteAccess.sshTunnels?.length  ?? 0) > 0) && (
             <Box flexDirection="row">
-              <Text color="gray" dimColor>{'Remote: '}</Text>
-              <Text color={(instance.remoteAccess.directCidrs?.length ?? 0) > 0 ? 'yellow' : 'gray'}>
+              <Text color={mutedColor}>{'Remote: '}</Text>
+              <Text color={(instance.remoteAccess.directCidrs?.length ?? 0) > 0 ? 'yellow' : mutedColor}>
                 {`${instance.remoteAccess.directCidrs?.length ?? 0} direct CIDR(s)`}
               </Text>
-              <Text color="gray" dimColor>{'   '}</Text>
-              <Text color={(instance.remoteAccess.sshTunnels?.length ?? 0) > 0 ? 'yellow' : 'gray'}>
+              <Text color={mutedColor}>{'   '}</Text>
+              <Text color={(instance.remoteAccess.sshTunnels?.length ?? 0) > 0 ? 'yellow' : mutedColor}>
                 {`${instance.remoteAccess.sshTunnels?.length ?? 0} SSH tunnel(s)`}
               </Text>
             </Box>
@@ -183,7 +184,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
         )}
       </Box>
 
-      {!!opMsg && <Box marginBottom={1}><Text color="gray" dimColor>{`  ${opMsg}`}</Text></Box>}
+      {!!opMsg && <Box marginBottom={1}><Text color={mutedColor}>{`  ${opMsg}`}</Text></Box>}
 
       {!!opError && (
         <Box
@@ -197,13 +198,12 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
           {opError.split('\n').filter(Boolean).slice(-60).map((line, i) => (
             <Text
               key={i}
-              color={/error|fatal|could not|denied|refused/i.test(line) ? 'red' : 'gray'}
-              dimColor={!/error|fatal|could not|denied|refused/i.test(line)}
+              color={/error|fatal|could not|denied|refused/i.test(line) ? 'red' : mutedColor}
             >
               {line}
             </Text>
           ))}
-          <Text color="gray" dimColor>{'  (Press Esc to dismiss)'}</Text>
+          <Text color={mutedColor}>{'  (Press Esc to dismiss)'}</Text>
         </Box>
       )}
 
@@ -212,18 +212,18 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
         <Box>
           <Text bold color="blue">{'NAME                OWNER           ENCODING   SIZE'}</Text>
         </Box>
-        <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+        <Text color={mutedColor}>{'─'.repeat(60)}</Text>
         {status !== 'running' && (
-          <Text color="gray" dimColor>{'  Instance is not running.'}</Text>
+          <Text color={mutedColor}>{'  Instance is not running.'}</Text>
         )}
         {status === 'running' && dbState.loading && (
-          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color="gray">{'  Loading...'}</Text></Box>
+          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color={mutedColor}>{'  Loading...'}</Text></Box>
         )}
         {status === 'running' && dbState.error && (
           <Text color="red">{`  Error: ${dbState.error}`}</Text>
         )}
         {status === 'running' && !dbState.loading && dbs.length === 0 && (
-          <Text color="gray" dimColor>{'  No user databases found.'}</Text>
+          <Text color={mutedColor}>{'  No user databases found.'}</Text>
         )}
         {dbs.map((db, i) => {
           const isSel = i === selected;
@@ -232,9 +232,9 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
               <Text color={isSel ? 'cyan' : 'white'} bold={isSel}>
                 {`${isSel ? '▶ ' : '  '}${db.name.padEnd(20)}`}
               </Text>
-              <Text color="gray">{db.owner.padEnd(16)}</Text>
-              <Text color="gray">{db.encoding.padEnd(11)}</Text>
-              <Text color="gray">{db.sizePretty}</Text>
+              <Text color={mutedColor}>{db.owner.padEnd(16)}</Text>
+              <Text color={mutedColor}>{db.encoding.padEnd(11)}</Text>
+              <Text color={mutedColor}>{db.sizePretty}</Text>
             </Box>
           );
         })}
@@ -265,6 +265,7 @@ export const InstanceScreen: React.FC<InstanceScreenProps> = ({
         { key: 'S',     label: 'start/stop' },
         { key: 'U',     label: 'users'      },
         { key: 'A',     label: 'app db'     },
+        { key: 'P',     label: 'project db'  },
         { key: 'X',     label: 'external'   },
         ...(instance.installationType === 'hosted'
           ? [{ key: 'H', label: 'hosted setup' }]

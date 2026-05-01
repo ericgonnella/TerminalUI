@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { ScreenDef } from '../types';
+import { mutedColor } from '../theme';
 
 const LABELS: Record<ScreenDef['name'], string> = {
   'home':           'Home',
@@ -17,7 +18,8 @@ const LABELS: Record<ScreenDef['name'], string> = {
   'provision-app':   'Provision App DB',
   'remote-access':   'External Access',
   'hosted-setup':    'Hosted Setup',
-  'cloudflare-tunnel': 'Cloudflare Tunnel',
+  'cloudflare-tunnel':  'Cloudflare Tunnel',
+  'project-database':   'Project Database',
 };
 
 interface BreadcrumbProps {
@@ -38,8 +40,8 @@ export const Breadcrumb: React.FC<BreadcrumbProps> = React.memo(function Breadcr
         const isLast = i === stack.length - 1;
         return (
           <React.Fragment key={i}>
-            <Text color={isLast ? 'cyan' : 'gray'} bold={isLast}>{label}</Text>
-            {!isLast && <Text color="gray" dimColor>{' › '}</Text>}
+            <Text color={isLast ? 'cyan' : mutedColor} bold={isLast}>{label}</Text>
+            {!isLast && <Text color={mutedColor}>{' › '}</Text>}
           </React.Fragment>
         );
       })}

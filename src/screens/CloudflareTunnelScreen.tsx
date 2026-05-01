@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import {
@@ -7,6 +7,7 @@ import {
 } from '../services/hostedSetup';
 import type { Navigation } from '../hooks/useNavigation';
 import type { Instance } from '../types';
+import { mutedColor } from '../theme';
 
 interface Props {
   nav:      Navigation;
@@ -31,14 +32,6 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
   const [hostname, setHostname] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [built, setBuilt] = useState<BuiltTunnelScript | null>(null);
-  const poppedRef = useRef(false);
-
-  const goBack = useCallback(() => {
-    if (poppedRef.current) return;
-    poppedRef.current = true;
-    nav.pop();
-  }, [nav]);
-
   const buildAndShow = useCallback((host: string) => {
     try {
       const b = buildCloudflareTunnelForInstance(instance, host);
@@ -53,7 +46,7 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
   useInput((input, key) => {
     if (step === 'welcome') {
       if (key.return) { setStep('hostname'); return; }
-      if (key.escape) { goBack(); return; }
+      if (key.escape) { nav.pop(); return; }
       return;
     }
     if (step === 'hostname' && key.escape) { setStep('welcome'); return; }
@@ -63,7 +56,7 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
       return;
     }
     if (step === 'client') {
-      if (key.return || key.escape) { goBack(); return; }
+      if (key.return || key.escape) { nav.pop(); return; }
       return;
     }
   });
@@ -73,7 +66,7 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="magenta" paddingX={2} flexDirection="column">
           <Text color="magenta" bold>{'Cloudflare Tunnel — bypass upstream firewall'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">
             {'Use this when your cloud provider silently drops inbound traffic on'}
           </Text>
@@ -81,7 +74,7 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
             {`port ${instance.port} (e.g. BuyVM AbuseGuard, restrictive cloud security groups).`}
           </Text>
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'How it works:'}</Text>
+            <Text color={mutedColor}>{'How it works:'}</Text>
             <Text color="white">{'  • cloudflared on the VPS makes a long-lived outbound HTTPS connection'}</Text>
             <Text color="white">{'  • Cloudflare brokers traffic from clients into the VPS — NO inbound port'}</Text>
             <Text color="white">{'  • You connect via a hostname like  pg.example.com'}</Text>
@@ -93,16 +86,16 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
           </Box>
           <Box marginTop={1} flexDirection="column">
             <Text color="yellow" bold>{'⚠  Limitation — Netlify / serverless front-ends'}</Text>
-            <Text color="gray">{'   TCP-mode tunnels require the CLIENT to also run cloudflared, which'}</Text>
-            <Text color="gray">{'   Netlify Functions cannot do. This wizard works for:'}</Text>
-            <Text color="gray">{'     ✓ You connecting from a laptop / dev machine'}</Text>
-            <Text color="gray">{'     ✓ A backend you control (long-running VM, Fly.io machine, etc.)'}</Text>
-            <Text color="gray">{'     ✗ Netlify Functions, Vercel Edge — for those use a managed pooler'}</Text>
-            <Text color="gray">{'       (Supabase pooler, Neon) or open the upstream firewall instead.'}</Text>
+            <Text color={mutedColor}>{'   TCP-mode tunnels require the CLIENT to also run cloudflared, which'}</Text>
+            <Text color={mutedColor}>{'   Netlify Functions cannot do. This wizard works for:'}</Text>
+            <Text color={mutedColor}>{'     ✓ You connecting from a laptop / dev machine'}</Text>
+            <Text color={mutedColor}>{'     ✓ A backend you control (long-running VM, Fly.io machine, etc.)'}</Text>
+            <Text color={mutedColor}>{'     ✗ Netlify Functions, Vercel Edge — for those use a managed pooler'}</Text>
+            <Text color={mutedColor}>{'       (Supabase pooler, Neon) or open the upstream firewall instead.'}</Text>
           </Box>
           <Box marginTop={1}>
             <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'continue   '}</Text>
-            <Text color="gray" bold>{'[Esc] '}</Text><Text color="gray">{'cancel'}</Text>
+            <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'cancel'}</Text>
           </Box>
         </Box>
       </Box>
@@ -114,10 +107,10 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Text color="cyan" bold>{'Step 1 of 3 — Pick a hostname'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">{'Enter the hostname you want clients to connect to. The parent domain'}</Text>
           <Text color="white">{'must already be added to your Cloudflare account.'}</Text>
-          <Text color="gray" dimColor>{'  Examples:  pg.example.com   db.eric-weightloss.app   wt.example.com'}</Text>
+          <Text color={mutedColor}>{'  Examples:  pg.example.com   db.eric-weightloss.app   wt.example.com'}</Text>
           <Box marginTop={1}>
             <Text color="cyan">{'> '}</Text>
             <TextInput
@@ -128,7 +121,7 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
             />
           </Box>
           {!!error && <Text color="red">{`  ${error}`}</Text>}
-          <Text color="gray" dimColor>{'  [Enter] continue   [Esc] back'}</Text>
+          <Text color={mutedColor}>{'  [Enter] continue   [Esc] back'}</Text>
         </Box>
       </Box>
     );
@@ -142,35 +135,35 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Text color="cyan" bold>{'Step 2 of 3 — Run on the VPS'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">
             {'Tunnel name: '}<Text color="green">{built.tunnelName}</Text>
             {'   →   '}<Text color="green">{built.hostname}</Text>
             {' → '}<Text color="green">{`tcp://localhost:${instance.port}`}</Text>
           </Text>
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'Save the script to a file and run it as root, e.g.:'}</Text>
+            <Text color={mutedColor}>{'Save the script to a file and run it as root, e.g.:'}</Text>
             <Text color="green">{'  curl -fsSL https://your-host/cf-tunnel.sh | sudo bash'}</Text>
-            <Text color="gray">{'  — or paste it interactively:'}</Text>
+            <Text color={mutedColor}>{'  — or paste it interactively:'}</Text>
             <Text color="green">{'  sudo bash <<\'PGMTUN\''}</Text>
           </Box>
-          <Box marginTop={1} flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
+          <Box marginTop={1} flexDirection="column" borderStyle="single" borderColor={mutedColor} paddingX={1}>
             {previewLines.map((line, i) => (
-              <Text key={i} color="gray">{line}</Text>
+              <Text key={i} color={mutedColor}>{line}</Text>
             ))}
             {remaining > 0 && (
-              <Text color="yellow" dimColor>{`  … (${remaining} more lines — your terminal scroll-back has the full script if you copied it whole) …`}</Text>
+              <Text color="yellow">{`  … (${remaining} more lines — your terminal scroll-back has the full script if you copied it whole) …`}</Text>
             )}
             <Text color="green">{'PGMTUN'}</Text>
           </Box>
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'During the run cloudflared will print a one-time login URL.'}</Text>
-            <Text color="gray">{'Open it in any browser, sign in to Cloudflare, and select the parent zone'}</Text>
+            <Text color={mutedColor}>{'During the run cloudflared will print a one-time login URL.'}</Text>
+            <Text color={mutedColor}>{'Open it in any browser, sign in to Cloudflare, and select the parent zone'}</Text>
             <Text color="white">{`for ${built.hostname}. The script will then continue automatically.`}</Text>
           </Box>
           <Box marginTop={1}>
             <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'show client command   '}</Text>
-            <Text color="gray" bold>{'[Esc] '}</Text><Text color="gray">{'change hostname'}</Text>
+            <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'change hostname'}</Text>
           </Box>
         </Box>
       </Box>
@@ -182,10 +175,10 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="green" paddingX={2} flexDirection="column">
           <Text color="green" bold>{'Step 3 of 3 — Connect from your laptop'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">{'Install cloudflared locally (one time, on Windows):'}</Text>
           <Text color="cyan">{'  winget install --id Cloudflare.cloudflared'}</Text>
-          <Text color="gray" dimColor>{'  (or download cloudflared-windows-amd64.exe from the Cloudflare GitHub release page)'}</Text>
+          <Text color={mutedColor}>{'  (or download cloudflared-windows-amd64.exe from the Cloudflare GitHub release page)'}</Text>
 
           <Box marginTop={1} flexDirection="column">
             <Text color="white">{'Then in one terminal — keep it running:'}</Text>
@@ -195,17 +188,17 @@ export const CloudflareTunnelScreen: React.FC<Props> = ({ nav, instance }) => {
           <Box marginTop={1} flexDirection="column">
             <Text color="white">{'In a second terminal:'}</Text>
             <Text color="green" bold>{`  psql -h 127.0.0.1 -p ${instance.port} -U ${instance.superuser} -d postgres`}</Text>
-            <Text color="gray" dimColor>{'  Connection URL form:'}</Text>
-            <Text color="gray">{`    postgresql://${instance.superuser}:<password>@127.0.0.1:${instance.port}/postgres`}</Text>
+            <Text color={mutedColor}>{'  Connection URL form:'}</Text>
+            <Text color={mutedColor}>{`    postgresql://${instance.superuser}:<password>@127.0.0.1:${instance.port}/postgres`}</Text>
           </Box>
 
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'How traffic flows:'}</Text>
-            <Text color="gray">{`  psql → 127.0.0.1:${instance.port}`}</Text>
-            <Text color="gray">{`     → cloudflared (your laptop)`}</Text>
-            <Text color="gray">{`     → Cloudflare edge → ${built.hostname}`}</Text>
-            <Text color="gray">{`     → cloudflared (VPS, outbound only) → localhost:${instance.port}`}</Text>
-            <Text color="gray">{`     → PostgreSQL`}</Text>
+            <Text color={mutedColor}>{'How traffic flows:'}</Text>
+            <Text color={mutedColor}>{`  psql → 127.0.0.1:${instance.port}`}</Text>
+            <Text color={mutedColor}>{`     → cloudflared (your laptop)`}</Text>
+            <Text color={mutedColor}>{`     → Cloudflare edge → ${built.hostname}`}</Text>
+            <Text color={mutedColor}>{`     → cloudflared (VPS, outbound only) → localhost:${instance.port}`}</Text>
+            <Text color={mutedColor}>{`     → PostgreSQL`}</Text>
           </Box>
 
           <Box marginTop={1}>

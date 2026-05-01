@@ -7,6 +7,7 @@ import type { Navigation } from '../hooks/useNavigation';
 import type { Instance }   from '../types';
 import { Pool }            from 'pg';
 import * as audit          from '../services/auditLog';
+import { mutedColor } from '../theme';
 
 interface QueryScreenProps {
   nav:      Navigation;
@@ -96,7 +97,7 @@ export const QueryScreen: React.FC<QueryScreenProps> = ({ nav, instance, databas
       {(mode === 'input' || mode === 'running') && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan">{`Query  ›  ${database}`}</Text>
-          <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(60)}</Text>
           <TextInput
             value={query}
             onChange={setQuery}
@@ -117,15 +118,15 @@ export const QueryScreen: React.FC<QueryScreenProps> = ({ nav, instance, databas
         <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={1} marginBottom={1}>
           <Box>
             <Text bold color="green">{`${result.rowCount} rows`}</Text>
-            <Text color="gray" dimColor>{`  (${result.duration}ms)`}</Text>
+            <Text color={mutedColor}>{`  (${result.duration}ms)`}</Text>
           </Box>
-          <Text color="gray" dimColor>{'─'.repeat(72)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(72)}</Text>
           {/* Header */}
           <Box>
             {result.columns.slice(0, 4).map(c => (
               <Text key={c} bold color="blue">{c.substring(0, COL_W - 1).padEnd(COL_W)}</Text>
             ))}
-            {result.columns.length > 4 && <Text color="gray" dimColor>{'…'}</Text>}
+            {result.columns.length > 4 && <Text color={mutedColor}>{'…'}</Text>}
           </Box>
           {/* Rows */}
           {displayRows.map((row, ri) => (
@@ -134,14 +135,14 @@ export const QueryScreen: React.FC<QueryScreenProps> = ({ nav, instance, databas
                 const v = row[c];
                 const s = v === null ? 'NULL' : v === undefined ? '' : String(v);
                 return (
-                  <Text key={c} color={v === null ? 'gray' : 'white'}>
+                  <Text key={c} color={v === null ? mutedColor : 'white'}>
                     {s.substring(0, COL_W - 1).padEnd(COL_W)}
                   </Text>
                 );
               })}
             </Box>
           ))}
-          <Text color="gray" dimColor>{`  Page ${rowPage + 1} / ${Math.ceil(result.rows.length / PAGE_SIZE)}`}</Text>
+          <Text color={mutedColor}>{`  Page ${rowPage + 1} / ${Math.ceil(result.rows.length / PAGE_SIZE)}`}</Text>
         </Box>
       )}
 
@@ -149,7 +150,7 @@ export const QueryScreen: React.FC<QueryScreenProps> = ({ nav, instance, databas
       {mode === 'error' && error && (
         <Box borderStyle="round" borderColor="red" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="red">{'Query Error'}</Text>
-          <Text color="red" dimColor>{error}</Text>
+          <Text color="red">{error}</Text>
         </Box>
       )}
 

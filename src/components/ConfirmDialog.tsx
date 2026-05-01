@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text, useInput } from 'ink';
+import { mutedColor } from '../theme';
 
 interface ConfirmDialogProps {
   message:   string;
@@ -25,11 +26,11 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         {danger ? '⚠  ' : '? '}
       </Text>
       <Text color="white">{message}</Text>
-      <Text color="gray" dimColor>{'  '}</Text>
+      <Text color={mutedColor}>{'  '}</Text>
       <Text color="green" bold>{'[Y]'}</Text>
-      <Text color="gray">{' yes  '}</Text>
+      <Text color={mutedColor}>{' yes  '}</Text>
       <Text color="red" bold>{'[N]'}</Text>
-      <Text color="gray">{' no'}</Text>
+      <Text color={mutedColor}>{' no'}</Text>
     </Box>
   );
 };

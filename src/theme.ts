@@ -1,11 +1,17 @@
 import type { LogLevel, InstanceStatus } from './types';
 
+// On Windows, ANSI "gray" (bright-black / color index 90) renders near-black
+// against dark terminal backgrounds, making descriptive text invisible.
+// Use plain white for muted/secondary text on Windows so it is always legible.
+// On Linux / macOS the standard gray is clearly visible, so keep it there.
+export const mutedColor = process.platform === 'win32' ? 'white' : 'gray';
+
 export const colors = {
   primary:  'cyan',
   success:  'green',
   warning:  'yellow',
   error:    'red',
-  muted:    'gray',
+  muted:    mutedColor,
   accent:   'magenta',
   info:     'cyan',
   white:    'white',

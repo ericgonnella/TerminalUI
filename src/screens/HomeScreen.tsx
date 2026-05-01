@@ -9,7 +9,7 @@ import {
 } from '../services/securityProbe';
 import { Keybindings }        from '../components/Keybindings';
 import { ConfirmDialog }      from '../components/ConfirmDialog';
-import { getInstanceStatusColor } from '../theme';
+import { getInstanceStatusColor, mutedColor } from '../theme';
 import { getInstanceStatus, startInstance, stopInstance } from '../services/pgctl';
 import { useTerminalSize }    from '../hooks/useTerminalSize';
 import type { Navigation }    from '../hooks/useNavigation';
@@ -41,7 +41,7 @@ const CHECK_COLOR: Record<CheckStatus, string> = {
   pass: 'green',
   warn: 'yellow',
   fail: 'red',
-  skip: 'gray',
+  skip: mutedColor,
   info: 'cyan',
 };
 
@@ -224,10 +224,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
           <Text bold color="blue">{'STATUS    '}</Text>
           <Text bold color="blue">{'DATA DIR'}</Text>
         </Box>
-        <Text color="gray" dimColor>{'─'.repeat(72)}</Text>
+        <Text color={mutedColor}>{'─'.repeat(72)}</Text>
 
         {list.length === 0 && (
-          <Text color="gray" dimColor>{'  No instances yet. Press [N] to create, [A] to add a remote, or [G] to download PostgreSQL.'}</Text>
+          <Text color={mutedColor}>{'  No instances yet. Press [N] to create, [A] to add a remote, or [G] to download PostgreSQL.'}</Text>
         )}
 
         {list.map((inst, i) => {
@@ -248,7 +248,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
               <Text color={isSel ? 'cyan' : 'white'} bold={isSel}>
                 {`${isSel ? '▶ ' : '  '}${inst.name.padEnd(16)}`}
               </Text>
-              <Text color={isSel ? 'cyan' : 'gray'}>{String(inst.port).padEnd(7)}</Text>
+              <Text color={isSel ? 'cyan' : mutedColor}>{String(inst.port).padEnd(7)}</Text>
               {isBusy ? (
                 <Box>
                   <Text color="yellow"><Spinner type="dots" /></Text>
@@ -258,7 +258,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
                 <Text color={color}>{`${icon} ${status.padEnd(9)}`}</Text>
               )}
               {isRemote && <Text color="magenta" bold>{'[R] '}</Text>}
-              <Text color="gray" dimColor>{location}</Text>
+              <Text color={mutedColor}>{location}</Text>
             </Box>
           );
         })}
@@ -266,7 +266,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
 
       {opLog && (
         <Box marginBottom={1}>
-          <Text color="gray" dimColor>{`  ${opLog}`}</Text>
+          <Text color={mutedColor}>{`  ${opLog}`}</Text>
         </Box>
       )}
 
@@ -282,13 +282,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
           {opError.split('\n').filter(Boolean).slice(-60).map((line, i) => (
             <Text
               key={i}
-              color={/error|fatal|could not|denied|refused/i.test(line) ? 'red' : 'gray'}
-              dimColor={!/error|fatal|could not|denied|refused/i.test(line)}
+              color={/error|fatal|could not|denied|refused/i.test(line) ? 'red' : mutedColor}
             >
               {line}
             </Text>
           ))}
-          <Text color="gray" dimColor>{'  (Press Esc to dismiss)'}</Text>
+          <Text color={mutedColor}>{'  (Press Esc to dismiss)'}</Text>
         </Box>
       )}
 
@@ -324,46 +323,46 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
         return (
           <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="cyan" bold>{'Instance Info'}</Text>
-            <Text color="gray">{'─'.repeat(56)}</Text>
+            <Text color={mutedColor}>{'─'.repeat(56)}</Text>
             <Box flexDirection="row">
-              <Text color="gray">{'Instance:  '}</Text>
+              <Text color={mutedColor}>{'Instance:  '}</Text>
               <Text color="cyan" bold>{inst.name}</Text>
               {isRemote && <Text color="magenta" bold>{'   [REMOTE]'}</Text>}
               {inst.external && !isRemote && <Text color="blue" bold>{'   [EXTERNAL]'}</Text>}
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Host/Port: '}</Text>
+              <Text color={mutedColor}>{'Host/Port: '}</Text>
               <Text color="white">{`${host}:${inst.port}`}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'User:      '}</Text>
+              <Text color={mutedColor}>{'User:      '}</Text>
               <Text color="white">{inst.superuser}</Text>
-              <Text color="gray">{'   Password: '}</Text>
-              <Text color={inst.hasPassword ? 'yellow' : 'gray'} dimColor={!inst.hasPassword}>
+              <Text color={mutedColor}>{'   Password: '}</Text>
+              <Text color={inst.hasPassword ? 'yellow' : mutedColor}>
                 {inst.hasPassword ? '(set \u2014 use the password you created)' : '(trust auth \u2014 none required)'}
               </Text>
             </Box>
             {inst.dataDir && (
               <Box flexDirection="row">
-                <Text color="gray">{'Data dir:  '}</Text>
+                <Text color={mutedColor}>{'Data dir:  '}</Text>
                 <Text color="white">{inst.dataDir}</Text>
               </Box>
             )}
             {inst.pgVersion && (
               <Box flexDirection="row">
-                <Text color="gray">{'PG version:'}</Text>
+                <Text color={mutedColor}>{'PG version:'}</Text>
                 <Text color="white">{`  PostgreSQL ${inst.pgVersion}`}</Text>
               </Box>
             )}
             {inst.systemdService && (
               <Box flexDirection="row">
-                <Text color="gray">{'Systemd:   '}</Text>
+                <Text color={mutedColor}>{'Systemd:   '}</Text>
                 <Text color="white">{inst.systemdService}</Text>
               </Box>
             )}
             {inst.winServiceName && (
               <Box flexDirection="row">
-                <Text color="gray">{'Service:   '}</Text>
+                <Text color={mutedColor}>{'Service:   '}</Text>
                 <Text color="white">{inst.winServiceName}</Text>
               </Box>
             )}
@@ -374,44 +373,44 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
               if (cidrs.length === 0 && tunnels.length === 0) return null;
               return (
                 <Box flexDirection="column" marginTop={1}>
-                  <Text color="gray">{'─'.repeat(56)}</Text>
+                  <Text color={mutedColor}>{'─'.repeat(56)}</Text>
                   <Text color="magenta" bold>{'Online Access'}</Text>
                   {ra?.listenAllUpdated && (
                     <Box flexDirection="row">
-                      <Text color="gray">{'Listen:    '}</Text>
+                      <Text color={mutedColor}>{'Listen:    '}</Text>
                       <Text color="white">{'all interfaces (0.0.0.0 / ::) — postgresql.conf updated'}</Text>
                     </Box>
                   )}
                   {cidrs.length > 0 && (
                     <Box flexDirection="column" marginTop={1}>
-                      <Text color="gray">{`Direct TCP allow-list (${cidrs.length}):`}</Text>
+                      <Text color={mutedColor}>{`Direct TCP allow-list (${cidrs.length}):`}</Text>
                       {cidrs.map((c, i) => (
                         <Box key={`cidr-${i}`} flexDirection="row">
                           <Text color="cyan">{'  • '}</Text>
                           <Text color="white">{c.cidr}</Text>
-                          <Text color="gray" dimColor>{`   (added ${c.addedAt.slice(0, 10)})`}</Text>
+                          <Text color={mutedColor}>{`   (added ${c.addedAt.slice(0, 10)})`}</Text>
                         </Box>
                       ))}
                     </Box>
                   )}
                   {tunnels.length > 0 && (
                     <Box flexDirection="column" marginTop={1}>
-                      <Text color="gray">{`SSH reverse tunnels (${tunnels.length}):`}</Text>
+                      <Text color={mutedColor}>{`SSH reverse tunnels (${tunnels.length}):`}</Text>
                       {tunnels.map((t, i) => (
                         <Box key={`tun-${i}`} flexDirection="column">
                           <Box flexDirection="row">
                             <Text color="cyan">{'  • '}</Text>
                             <Text color="white">{`${t.sshUser}@${t.remoteHost}:${t.sshPort}`}</Text>
-                            <Text color="gray">{'  →  remote port '}</Text>
+                            <Text color={mutedColor}>{'  →  remote port '}</Text>
                             <Text color="white">{String(t.remotePort)}</Text>
                           </Box>
                           {t.serviceName && (
-                            <Text color="gray" dimColor>{`      service: ${t.serviceName}`}</Text>
+                            <Text color={mutedColor}>{`      service: ${t.serviceName}`}</Text>
                           )}
                         </Box>
                       ))}
                       <Box marginTop={1} flexDirection="column">
-                        <Text color="gray" dimColor>{'    Connect from a tunnel client with:'}</Text>
+                        <Text color={mutedColor}>{'    Connect from a tunnel client with:'}</Text>
                         {tunnels.map((t, i) => (
                           <Text key={`tun-cmd-${i}`} color="cyan">
                             {`      psql -h 127.0.0.1 -p ${t.remotePort} -U ${inst.superuser} -d postgres`}
@@ -420,19 +419,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
                       </Box>
                     </Box>
                   )}
-                  <Text color="gray" dimColor>{'    Press [X] on the instance screen to manage online access.'}</Text>
+                  <Text color={mutedColor}>{'    Press [X] on the instance screen to manage online access.'}</Text>
                 </Box>
               );
             })()}
-            <Text color="gray">{'─'.repeat(56)}</Text>
-            <Text color="gray">{'Connection URL:'}</Text>
+            <Text color={mutedColor}>{'─'.repeat(56)}</Text>
+            <Text color={mutedColor}>{'Connection URL:'}</Text>
             <Text color="cyan">{connUrl}</Text>
-            <Text color="gray">{'psql:'}</Text>
+            <Text color={mutedColor}>{'psql:'}</Text>
             <Text color="cyan">{psqlCmd}</Text>
             {isRemote && !inst.systemdService && (
               <Box marginTop={1} flexDirection="column">
-                <Text color="gray" dimColor>{'Remote instance: start/stop is managed externally.'}</Text>
-                <Text color="gray" dimColor>{'To control it via pgmanager, set a systemd unit name when importing.'}</Text>
+                <Text color={mutedColor}>{'Remote instance: start/stop is managed externally.'}</Text>
+                <Text color={mutedColor}>{'To control it via pgmanager, set a systemd unit name when importing.'}</Text>
               </Box>
             )}
           </Box>
@@ -454,36 +453,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ nav, instances, pgCtlBin
             <Text color={inst.installationType === 'hosted' ? 'yellow' : 'green'} bold>
               {inst.installationType === 'hosted' ? '\u26a0  Security Probe \u2014 HOSTED' : '\u2713  Security Probe'}
             </Text>
-            <Text color="gray">{'─'.repeat(56)}</Text>
+            <Text color={mutedColor}>{'─'.repeat(56)}</Text>
 
             {/* Vault encryption — always known, no connection needed */}
             <Box flexDirection="row">
               <Text color="green">{'\u2713 '}</Text>
-              <Text color="gray" bold>{'Credential storage: '}</Text>
-              <Text color="gray">{'AES-256-GCM vault.enc (mode 0600).'}</Text>
+              <Text color={mutedColor} bold>{'Credential storage: '}</Text>
+              <Text color={mutedColor}>{'AES-256-GCM vault.enc (mode 0600).'}</Text>
             </Box>
 
             {/* Live probe results */}
             {!probe ? (
               <Box flexDirection="row" marginTop={1}>
                 <Text color="yellow"><Spinner type="dots" /></Text>
-                <Text color="gray">{'  Running checks\u2026'}</Text>
+                <Text color={mutedColor}>{'  Running checks\u2026'}</Text>
               </Box>
             ) : (
               <>
                 {probe.connectionError && (
-                  <Text color="gray" dimColor>
+                  <Text color={mutedColor}>
                     {`Live checks skipped (server unreachable): ${probe.connectionError}`}
                   </Text>
                 )}
                 {probe.checks.map((check, i) => (
                   <Box key={i} flexDirection="row">
                     <Text color={CHECK_COLOR[check.status]}>{`${CHECK_ICON[check.status]} `}</Text>
-                    <Text color="gray" bold>{`${check.label}: `}</Text>
-                    <Text color="gray">{check.detail}</Text>
+                    <Text color={mutedColor} bold>{`${check.label}: `}</Text>
+                    <Text color={mutedColor}>{check.detail}</Text>
                   </Box>
                 ))}
-                <Text color="gray" dimColor>
+                <Text color={mutedColor}>
                   {`Checked at ${new Date(probe.ranAt).toLocaleTimeString()}  \u2014  [P] to recheck  [Esc] to close`}
                 </Text>
               </>

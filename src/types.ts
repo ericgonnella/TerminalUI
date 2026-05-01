@@ -101,6 +101,72 @@ export interface RemoteAccessConfig {
   lastUpdatedAt?:     string;
 }
 
+// ─── Project database provisioning ───────────────────────────────────────────
+
+/**
+ * Network/security access mode for a project database.
+ * Controls which firewall and pg_hba.conf rules are applied.
+ */
+export type AccessMode =
+  | 'internal'             // same-VPS loopback only; no public exposure
+  | 'testing_open'         // public internet, no IP restrictions (TEMPORARY)
+  | 'testing_allowlist'    // public internet, specific IPs only (TEMPORARY)
+  | 'production_local'     // same-VPS production; loopback only + backups
+  | 'production_allowlist' // external backend; strict IP allowlist + TLS
+  | 'production_vpn';      // VPN/private network only
+
+/**
+ * Where the backend API that connects to this database is hosted.
+ * Drives which host is embedded in the recommended DATABASE_URL.
+ */
+export type BackendLocation =
+  | 'same_vps'
+  | 'same_vps_docker'
+  | 'external_vps'
+  | 'netlify_functions'
+  | 'vercel_functions'
+  | 'local_dev_machine'
+  | 'unknown';
+
+/** Framework target for .env template generation. */
+export type EnvTarget =
+  | 'node_express'
+  | 'prisma'
+  | 'drizzle'
+  | 'netlify_frontend'
+  | 'external_vps';
+
+/** A project database record stored alongside the instance config. */
+export interface ProjectDatabase {
+  id:               string;   // `${instanceId}:${databaseName}`
+  instanceId:       string;
+  databaseName:     string;
+  appUser:          string;
+  projectName:      string;
+  accessMode:       AccessMode;
+  backendLocation:  BackendLocation;
+  allowedCidrs:     string[];
+  publicIp?:        string;
+  useTls:           boolean;
+  createdAt:        string;
+  lastHealthCheck?: ProjectHealthCheck;
+}
+
+export interface ProjectHealthCheck {
+  checkedAt:     string;
+  pgIsReady:     'passed' | 'failed' | 'skipped';
+  localSql:      'passed' | 'failed' | 'skipped';
+  listener:      'passed' | 'failed' | 'skipped' | 'warning';
+  firewallCheck: 'passed' | 'failed' | 'skipped' | 'warning';
+  details:       string[];
+}
+
+export interface ProjectWarning {
+  level:   'error' | 'warning' | 'info';
+  code:    string;
+  message: string;
+}
+
 export interface DatabaseInfo {
   name: string;
   owner: string;
@@ -152,7 +218,8 @@ export type ScreenName =
   | 'provision-app'
   | 'remote-access'
   | 'hosted-setup'
-  | 'cloudflare-tunnel';
+  | 'cloudflare-tunnel'
+  | 'project-database';
 
 export interface HomeScreen       { name: 'home' }
 export interface NewInstanceScreen { name: 'new-instance' }
@@ -169,6 +236,7 @@ export interface ProvisionAppScreen    { name: 'provision-app';    instance: Ins
 export interface RemoteAccessScreen    { name: 'remote-access';    instance: Instance }
 export interface HostedSetupScreen     { name: 'hosted-setup';     instance: Instance }
 export interface CloudflareTunnelScreen { name: 'cloudflare-tunnel'; instance: Instance }
+export interface ProjectDatabaseScreen { name: 'project-database'; instance: Instance }
 
 export type ScreenDef =
   | HomeScreen
@@ -185,4 +253,5 @@ export type ScreenDef =
   | ProvisionAppScreen
   | RemoteAccessScreen
   | HostedSetupScreen
-  | CloudflareTunnelScreen;
+  | CloudflareTunnelScreen
+  | ProjectDatabaseScreen;

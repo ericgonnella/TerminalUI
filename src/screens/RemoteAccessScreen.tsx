@@ -14,6 +14,7 @@ import { ConfirmDialog }    from '../components/ConfirmDialog';
 import type { Navigation }  from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
 import type { Instance, LogEntry, RemoteAccessConfig, SshTunnelEntry } from '../types';
+import { mutedColor } from '../theme';
 
 let _logId = 1;
 function makeLog(level: LogEntry['level'], msg: string): LogEntry {
@@ -354,16 +355,16 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
       {/* Context header */}
       <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
         <Text bold color="cyan">{'External access — '}{instance.name}</Text>
-        <Text color="gray" dimColor>
+        <Text color={mutedColor}>
           {'Expose this PostgreSQL instance to remote machines via direct TCP or SSH reverse tunnel.'}
         </Text>
         <Box marginTop={1}>
-          <Text color="gray">{'Host: '}</Text><Text color="white">{host}</Text>
-          <Text color="gray">{'   Port: '}</Text><Text color="white">{String(instance.port)}</Text>
-          <Text color="gray">{'   Allowed sources: '}</Text>
-          <Text color={directCount > 0 ? 'yellow' : 'gray'}>{String(directCount)}</Text>
-          <Text color="gray">{'   SSH tunnels: '}</Text>
-          <Text color={tunnelCount > 0 ? 'yellow' : 'gray'}>{String(tunnelCount)}</Text>
+          <Text color={mutedColor}>{'Host: '}</Text><Text color="white">{host}</Text>
+          <Text color={mutedColor}>{'   Port: '}</Text><Text color="white">{String(instance.port)}</Text>
+          <Text color={mutedColor}>{'   Allowed sources: '}</Text>
+          <Text color={directCount > 0 ? 'yellow' : mutedColor}>{String(directCount)}</Text>
+          <Text color={mutedColor}>{'   SSH tunnels: '}</Text>
+          <Text color={tunnelCount > 0 ? 'yellow' : mutedColor}>{String(tunnelCount)}</Text>
         </Box>
       </Box>
 
@@ -373,17 +374,17 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
           <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text bold color="green">{'Direct TCP access'}</Text>
             {directCount === 0 ? (
-              <Text color="gray" dimColor>{'  None configured.'}</Text>
+              <Text color={mutedColor}>{'  None configured.'}</Text>
             ) : (
               <Box flexDirection="column" marginTop={1}>
                 {(instance.remoteAccess!.directCidrs).map(c => (
                   <Box key={c.cidr}>
                     <Text color="white">{`  • ${c.cidr.padEnd(20)}`}</Text>
-                    <Text color="gray" dimColor>{`  added ${c.addedAt}`}</Text>
+                    <Text color={mutedColor}>{`  added ${c.addedAt}`}</Text>
                   </Box>
                 ))}
                 <Box marginTop={1}>
-                  <Text color="gray" dimColor>
+                  <Text color={mutedColor}>
                     {`  Connect from those IPs:  postgresql://<user>:<pw>@<this-server>:${instance.port}/<db>`}
                   </Text>
                 </Box>
@@ -394,18 +395,18 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
           <Box borderStyle="round" borderColor="blue" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text bold color="blue">{'SSH reverse tunnels'}</Text>
             {tunnelCount === 0 ? (
-              <Text color="gray" dimColor>{'  None configured.'}</Text>
+              <Text color={mutedColor}>{'  None configured.'}</Text>
             ) : (
               <Box flexDirection="column" marginTop={1}>
                 {(instance.remoteAccess!.sshTunnels).map((t, i) => (
                   <Box key={i} flexDirection="column">
                     <Box>
                       <Text color="white">{`  • ${t.sshUser}@${t.remoteHost}:${t.sshPort}`}</Text>
-                      <Text color="gray">{'   →   remote 127.0.0.1:'}</Text>
+                      <Text color={mutedColor}>{'   →   remote 127.0.0.1:'}</Text>
                       <Text color="cyan">{String(t.remotePort)}</Text>
                     </Box>
                     {t.serviceFilePath && (
-                      <Text color="gray" dimColor>{`     ${t.serviceFilePath}`}</Text>
+                      <Text color={mutedColor}>{`     ${t.serviceFilePath}`}</Text>
                     )}
                   </Box>
                 ))}
@@ -414,7 +415,7 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
           </Box>
 
           {!!opMessage && (
-            <Box marginBottom={1}><Text color="gray" dimColor>{`  ${opMessage}`}</Text></Box>
+            <Box marginBottom={1}><Text color={mutedColor}>{`  ${opMessage}`}</Text></Box>
           )}
 
           <Keybindings bindings={[
@@ -436,17 +437,17 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
                 <Text color="green" bold>{'[D] '}</Text>
                 <Text color="white" bold>{'Direct TCP access'}</Text>
               </Box>
-              <Text color="gray" dimColor>{'     Allow specific IPs / CIDRs to reach PostgreSQL on this host.'}</Text>
-              <Text color="gray" dimColor>{'     Sets listen_addresses=*, writes pg_hba.conf rules, opens host firewall.'}</Text>
+              <Text color={mutedColor}>{'     Allow specific IPs / CIDRs to reach PostgreSQL on this host.'}</Text>
+              <Text color={mutedColor}>{'     Sets listen_addresses=*, writes pg_hba.conf rules, opens host firewall.'}</Text>
             </Box>
             <Box marginTop={1} flexDirection="column">
               <Box>
                 <Text color="yellow" bold>{'[T] '}</Text>
                 <Text color="white" bold>{'SSH reverse tunnel'}</Text>
               </Box>
-              <Text color="gray" dimColor>{'     PostgreSQL stays on 127.0.0.1. Generates a service file (systemd/'}</Text>
-              <Text color="gray" dimColor>{'     launchd/Task Scheduler) that opens an outbound SSH connection and'}</Text>
-              <Text color="gray" dimColor>{'     binds a port on the remote machine. More secure — no firewall hole.'}</Text>
+              <Text color={mutedColor}>{'     PostgreSQL stays on 127.0.0.1. Generates a service file (systemd/'}</Text>
+              <Text color={mutedColor}>{'     launchd/Task Scheduler) that opens an outbound SSH connection and'}</Text>
+              <Text color={mutedColor}>{'     binds a port on the remote machine. More secure — no firewall hole.'}</Text>
             </Box>
           </Box>
           <Keybindings bindings={[
@@ -462,36 +463,36 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="white" bold>{'Who is allowed to connect?'}</Text>
-            <Text color="gray">{'Enter an '}<Text color="cyan">{'IP address'}</Text>{', a '}<Text color="cyan">{'CIDR block'}</Text>{', or a '}<Text color="cyan">{'domain name'}</Text>{'.'}</Text>
+            <Text color={mutedColor}>{'Enter an '}<Text color="cyan">{'IP address'}</Text>{', a '}<Text color="cyan">{'CIDR block'}</Text>{', or a '}<Text color="cyan">{'domain name'}</Text>{'.'}</Text>
             <Box marginTop={1} flexDirection="column">
               <Box flexDirection="row">
-                <Text color="gray" dimColor>{'  Single IP   →  '}</Text>
+                <Text color={mutedColor}>{'  Single IP   →  '}</Text>
                 <Text color="yellow">{'203.0.113.5'}</Text>
-                <Text color="gray" dimColor>{'                 (one specific machine)'}</Text>
+                <Text color={mutedColor}>{'                 (one specific machine)'}</Text>
               </Box>
               <Box flexDirection="row">
-                <Text color="gray" dimColor>{'  CIDR        →  '}</Text>
+                <Text color={mutedColor}>{'  CIDR        →  '}</Text>
                 <Text color="yellow">{'198.51.100.0/24'}</Text>
-                <Text color="gray" dimColor>{'             (a whole subnet)'}</Text>
+                <Text color={mutedColor}>{'             (a whole subnet)'}</Text>
               </Box>
               <Box flexDirection="row">
-                <Text color="gray" dimColor>{'  Domain      →  '}</Text>
+                <Text color={mutedColor}>{'  Domain      →  '}</Text>
                 <Text color="yellow">{'home.example.com'}</Text>
-                <Text color="gray" dimColor>{'           (resolved by DNS — great for dynamic IPs)'}</Text>
+                <Text color={mutedColor}>{'           (resolved by DNS — great for dynamic IPs)'}</Text>
               </Box>
               <Box flexDirection="row">
-                <Text color="gray" dimColor>{'  IPv6        →  '}</Text>
+                <Text color={mutedColor}>{'  IPv6        →  '}</Text>
                 <Text color="yellow">{'2001:db8::/32'}</Text>
               </Box>
             </Box>
             <Box marginTop={1}>
-              <Text color="gray" dimColor>
+              <Text color={mutedColor}>
                 {'  Tip: domains like DuckDNS / No-IP keep working when your home IP changes.'}
               </Text>
             </Box>
             {pendingCidrs.length > 0 && (
               <Box marginTop={1} flexDirection="column">
-                <Text color="gray" dimColor>{'  Already pending:'}</Text>
+                <Text color={mutedColor}>{'  Already pending:'}</Text>
                 {pendingCidrs.map(c => <Text key={c} color="cyan">{`    • ${c}`}</Text>)}
               </Box>
             )}
@@ -519,15 +520,15 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
           <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="green" bold>{`✓ Added ${pendingCidrs[pendingCidrs.length - 1]}`}</Text>
             <Box marginTop={1} flexDirection="column">
-              <Text color="gray" dimColor>{'  Pending list:'}</Text>
+              <Text color={mutedColor}>{'  Pending list:'}</Text>
               {pendingCidrs.map(c => <Text key={c} color="cyan">{`    • ${c}`}</Text>)}
             </Box>
             <Box marginTop={1}>
               <Text color="white">{'Add another? '}</Text>
               <Text color="green" bold>{'[Y] '}</Text>
-              <Text color="gray">{'yes  '}</Text>
+              <Text color={mutedColor}>{'yes  '}</Text>
               <Text color="red" bold>{'[N] '}</Text>
-              <Text color="gray">{'no, continue'}</Text>
+              <Text color={mutedColor}>{'no, continue'}</Text>
             </Box>
           </Box>
           <Keybindings bindings={[
@@ -543,20 +544,20 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="yellow" bold>{'⚠  Confirm direct TCP access'}</Text>
-            <Text color="gray" dimColor>{'  About to apply:'}</Text>
+            <Text color={mutedColor}>{'  About to apply:'}</Text>
             <Box marginTop={1} flexDirection="column">
-              <Text color="gray">{`  • Update postgresql.conf: listen_addresses = '*'`}</Text>
-              <Text color="gray">{`  • Append ${pendingCidrs.length} rule(s) to pg_hba.conf (scram-sha-256)`}</Text>
-              <Text color="gray">{`  • Open ${process.platform === 'win32' ? 'Windows Firewall' : process.platform === 'linux' ? 'ufw / firewall-cmd' : 'pf (manual)'} for port ${instance.port}/tcp from those CIDRs`}</Text>
-              <Text color="gray">{`  • Reload PostgreSQL (or restart if listen_addresses changed)`}</Text>
+              <Text color={mutedColor}>{`  • Update postgresql.conf: listen_addresses = '*'`}</Text>
+              <Text color={mutedColor}>{`  • Append ${pendingCidrs.length} rule(s) to pg_hba.conf (scram-sha-256)`}</Text>
+              <Text color={mutedColor}>{`  • Open ${process.platform === 'win32' ? 'Windows Firewall' : process.platform === 'linux' ? 'ufw / firewall-cmd' : 'pf (manual)'} for port ${instance.port}/tcp from those CIDRs`}</Text>
+              <Text color={mutedColor}>{`  • Reload PostgreSQL (or restart if listen_addresses changed)`}</Text>
             </Box>
             <Box marginTop={1} flexDirection="column">
-              <Text color="gray" dimColor>{'  CIDRs:'}</Text>
+              <Text color={mutedColor}>{'  CIDRs:'}</Text>
               {pendingCidrs.map(c => <Text key={c} color="cyan">{`    • ${c}`}</Text>)}
             </Box>
             <Box marginTop={1}>
-              <Text color="green" bold>{'[Y] '}</Text><Text color="gray">{'apply  '}</Text>
-              <Text color="red"   bold>{'[N] '}</Text><Text color="gray">{'go back'}</Text>
+              <Text color="green" bold>{'[Y] '}</Text><Text color={mutedColor}>{'apply  '}</Text>
+              <Text color="red"   bold>{'[N] '}</Text><Text color={mutedColor}>{'go back'}</Text>
             </Box>
           </Box>
         </Box>
@@ -591,14 +592,14 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
               ))}
             </Box>
             <Box marginTop={1} flexDirection="column">
-              <Text color="gray">{'  Connection (from allowed IPs):'}</Text>
+              <Text color={mutedColor}>{'  Connection (from allowed IPs):'}</Text>
               <Text color="cyan">
                 {`    psql -h <this-server> -p ${instance.port} -U <user> -d <db>`}
               </Text>
             </Box>
             {restartedInfo?.restarted && (
               <Box marginTop={1}>
-                <Text color="gray" dimColor>{'  PostgreSQL was restarted to apply listen_addresses change.'}</Text>
+                <Text color={mutedColor}>{'  PostgreSQL was restarted to apply listen_addresses change.'}</Text>
               </Box>
             )}
             {restartedInfo?.restartRequired && !restartedInfo?.restarted && (
@@ -616,7 +617,7 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="blue" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="white" bold>{'Remote machine SSH host'}</Text>
-            <Text color="gray" dimColor>{'  Hostname or IP of the VPS that should be able to reach PostgreSQL.'}</Text>
+            <Text color={mutedColor}>{'  Hostname or IP of the VPS that should be able to reach PostgreSQL.'}</Text>
             <Box marginTop={1}>
               <Text color="white">{'  > '}</Text>
               <TextInput
@@ -634,7 +635,7 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="blue" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="white" bold>{'SSH user on the remote machine'}</Text>
-            <Text color="gray" dimColor>{'  Must already accept key-based SSH login from this machine.'}</Text>
+            <Text color={mutedColor}>{'  Must already accept key-based SSH login from this machine.'}</Text>
             <Box marginTop={1}>
               <Text color="white">{'  > '}</Text>
               <TextInput
@@ -669,8 +670,8 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="blue" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="white" bold>{'Port to expose on the remote machine'}</Text>
-            <Text color="gray" dimColor>{'  This port (bound to 127.0.0.1 on the remote) will forward back to'}</Text>
-            <Text color="gray" dimColor>{`  127.0.0.1:${instance.port} on this machine.`}</Text>
+            <Text color={mutedColor}>{'  This port (bound to 127.0.0.1 on the remote) will forward back to'}</Text>
+            <Text color={mutedColor}>{`  127.0.0.1:${instance.port} on this machine.`}</Text>
             <Box marginTop={1}>
               <Text color="white">{'  > '}</Text>
               <TextInput
@@ -690,23 +691,23 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="green" bold>{'✓ Tunnel service file generated'}</Text>
-            <Text color="gray">{'─'.repeat(56)}</Text>
+            <Text color={mutedColor}>{'─'.repeat(56)}</Text>
             <Box flexDirection="row">
-              <Text color="gray">{'File:    '}</Text>
+              <Text color={mutedColor}>{'File:    '}</Text>
               <Text color="white">{generated.filePath}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Service: '}</Text>
+              <Text color={mutedColor}>{'Service: '}</Text>
               <Text color="white">{generated.serviceName}</Text>
             </Box>
             <Box marginTop={1} flexDirection="column">
               <Text color="white" bold>{'Install instructions:'}</Text>
               {generated.installInstructions.map((line, i) => (
-                <Text key={i} color="gray">{`  ${line}`}</Text>
+                <Text key={i} color={mutedColor}>{`  ${line}`}</Text>
               ))}
             </Box>
             <Box marginTop={1} flexDirection="column">
-              <Text color="gray">{'Once running, the remote machine can connect via:'}</Text>
+              <Text color={mutedColor}>{'Once running, the remote machine can connect via:'}</Text>
               <Text color="cyan">{`  ${generated.remoteConnectionUrl}`}</Text>
             </Box>
           </Box>
@@ -738,7 +739,7 @@ export const RemoteAccessScreen: React.FC<RemoteAccessScreenProps> = ({
           <Box borderStyle="round" borderColor="red" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="red" bold>{'✗ Operation failed'}</Text>
             {!!error && error.split('\n').filter(Boolean).slice(-20).map((line, i) => (
-              <Text key={i} color="red" dimColor>{line}</Text>
+              <Text key={i} color="red">{line}</Text>
             ))}
           </Box>
           <ActivityLog logs={logs} maxLines={8} />

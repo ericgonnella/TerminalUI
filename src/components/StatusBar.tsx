@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
+import { mutedColor } from '../theme';
 
 function formatUptime(start: Date): string {
   const sec = Math.floor((Date.now() - start.getTime()) / 1000);
@@ -37,16 +38,16 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   }, []);
 
   return (
-    <Box borderStyle="round" borderColor="gray" paddingX={2}>
+    <Box borderStyle="round" borderColor={mutedColor} paddingX={2}>
       <Text color="green">{'● '}</Text>
       <Text color="green" bold>{'ONLINE'}</Text>
-      <Text color="gray" dimColor>{'  │  Uptime: '}</Text>
+      <Text color={mutedColor}>{'  │  Uptime: '}</Text>
       <Text color="white">{formatUptime(startTime)}</Text>
-      <Text color="gray" dimColor>{'  │  Events: '}</Text>
+      <Text color={mutedColor}>{'  │  Events: '}</Text>
       <Text color="cyan">{String(totalEvents)}</Text>
-      <Text color="gray" dimColor>{'  │  Total Reqs: '}</Text>
+      <Text color={mutedColor}>{'  │  Total Reqs: '}</Text>
       <Text color="cyan">{totalRequests.toLocaleString()}</Text>
-      <Text color="gray" dimColor>{'  │  '}</Text>
+      <Text color={mutedColor}>{'  │  '}</Text>
       <Text color="white">{now}</Text>
     </Box>
   );

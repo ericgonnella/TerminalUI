@@ -1,4 +1,7 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
@@ -15,6 +18,7 @@ import { Keybindings } from '../components/Keybindings';
 import type { Navigation } from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
 import type { Instance, RemoteAccessConfig } from '../types';
+import { mutedColor } from '../theme';
 
 interface Props {
   nav:       Navigation;
@@ -56,11 +60,10 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
   const [entryError, setEntryError] = useState<string | null>(null);
 
   // Built script + probe results
-  const [built,  setBuilt]  = useState<BuiltScript | null>(null);
+  const [built,     setBuilt]     = useState<BuiltScript | null>(null);
+  const [savedPath, setSavedPath] = useState<string | null>(null);
   const [probe,  setProbe]  = useState<ProbeResult | null>(null);
   const [resolved, setResolved] = useState<string | null>(null);
-
-  const poppedRef = useRef(false);
 
   // Detect public IP once on mount.
   useEffect(() => {
@@ -85,6 +88,18 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
     setInstance(next);
     instances.updateInstance(next);
   }, [instance, instances]);
+
+  const saveScript = useCallback(() => {
+    if (!built) return;
+    try {
+      const fname = `pgmsetup-${instance.id}.sh`;
+      const fpath = path.join(os.tmpdir(), fname);
+      fs.writeFileSync(fpath, built.script, 'utf8');
+      setSavedPath(fpath);
+    } catch (err: any) {
+      setSavedPath(`(error saving: ${String(err?.message ?? err)})`);
+    }
+  }, [built, instance.id]);
 
   const buildAndShow = useCallback(() => {
     try {
@@ -116,7 +131,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
   useInput((input, key) => {
     if (step === 'welcome') {
       if (key.return) { setStep('allow-list'); return; }
-      if (key.escape) { if (!poppedRef.current) { poppedRef.current = true; nav.pop(); } return; }
+      if (key.escape) { nav.pop(); return; }
       return;
     }
     if (step === 'allow-list') {
@@ -127,10 +142,11 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
         return;
       }
       if (key.return && allowList.length > 0) { buildAndShow(); return; }
-      if (key.escape) { if (!poppedRef.current) { poppedRef.current = true; nav.pop(); } return; }
+      if (key.escape) { nav.pop(); return; }
       return;
     }
     if (step === 'review') {
+      if (input === 's' || input === 'S') { saveScript(); return; }
       if (key.return) { setStep('await-run'); return; }
       if (key.escape) { setStep('allow-list'); return; }
       return;
@@ -140,8 +156,10 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       if (key.escape) { setStep('review'); return; }
       return;
     }
+    // Block navigation while tests are running
+    if (step === 'testing') return;
     if (step === 'success') {
-      if (key.return || key.escape) { if (!poppedRef.current) { poppedRef.current = true; nav.pop(); } return; }
+      if (key.return || key.escape) { nav.pop(); return; }
       return;
     }
     if (step === 'failure') {
@@ -170,14 +188,14 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="magenta" paddingX={2} flexDirection="column">
           <Text color="magenta" bold>{'Guided Hosted Setup'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">
             {'This wizard configures '}
             <Text color="cyan" bold>{instance.name}</Text>
             <Text>{` (${host}:${instance.port}) for external connections.`}</Text>
           </Text>
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'It will:'}</Text>
+            <Text color={mutedColor}>{'It will:'}</Text>
             <Text color="white">{'  1. Detect your public IP and let you add more (IP / CIDR / domain)'}</Text>
             <Text color="white">{"  2. Generate a tailored bash script (listen_addresses='*', pg_hba, firewall, reload)"}</Text>
             <Text color="white">{'  3. Give you a copy-paste SSH one-liner to run on the VPS'}</Text>
@@ -185,15 +203,15 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
           </Box>
           <Box marginTop={1} flexDirection="column">
             <Text color="yellow" bold>{'⚠  Important — Netlify / serverless apps'}</Text>
-            <Text color="gray">{'   Netlify Functions egress from a wide, dynamic AWS IP range, so a tight'}</Text>
-            <Text color="gray">{'   CIDR allow-list will not reliably reach your DB. For production with'}</Text>
-            <Text color="gray">{'   eric-weightloss.netlify.app or similar, use one of:'}</Text>
-            <Text color="gray">{'     • A managed pooler / proxy in front (Supabase pooler, PgBouncer + Cloudflare Tunnel, Neon)'}</Text>
-            <Text color="gray">{'     • Or 0.0.0.0/0 + scram-sha-256 + a strong password (TLS recommended)'}</Text>
+            <Text color={mutedColor}>{'   Netlify Functions egress from a wide, dynamic AWS IP range, so a tight'}</Text>
+            <Text color={mutedColor}>{'   CIDR allow-list will not reliably reach your DB. For production with'}</Text>
+            <Text color={mutedColor}>{'   eric-weightloss.netlify.app or similar, use one of:'}</Text>
+            <Text color={mutedColor}>{'     • A managed pooler / proxy in front (Supabase pooler, PgBouncer + Cloudflare Tunnel, Neon)'}</Text>
+            <Text color={mutedColor}>{'     • Or 0.0.0.0/0 + scram-sha-256 + a strong password (TLS recommended)'}</Text>
           </Box>
           <Box marginTop={1}>
             <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'continue   '}</Text>
-            <Text color="gray" bold>{'[Esc] '}</Text><Text color="gray">{'cancel'}</Text>
+            <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'cancel'}</Text>
           </Box>
         </Box>
       </Box>
@@ -205,11 +223,11 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Text color="cyan" bold>{'Step 1 of 4 — Who is allowed to connect?'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           {detecting && (
             <Box>
               <Text color="yellow"><Spinner type="dots" /></Text>
-              <Text color="gray">{'  Detecting your public IP…'}</Text>
+              <Text color={mutedColor}>{'  Detecting your public IP…'}</Text>
             </Box>
           )}
           {!detecting && detectedIp && (
@@ -219,7 +237,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
             <Text color="yellow">{'⚠  Could not auto-detect public IP — add an entry manually with [A].'}</Text>
           )}
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'Allow-list entries:'}</Text>
+            <Text color={mutedColor}>{'Allow-list entries:'}</Text>
             {allowList.length === 0 && (
               <Text color="red">{'  (empty — at least one entry required)'}</Text>
             )}
@@ -234,7 +252,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
             <Text color="green" bold>{'[A] '}</Text><Text color="white">{'add another   '}</Text>
             <Text color="yellow" bold>{'[R] '}</Text><Text color="white">{'remove last   '}</Text>
             <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'continue   '}</Text>
-            <Text color="gray" bold>{'[Esc] '}</Text><Text color="gray">{'cancel'}</Text>
+            <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'cancel'}</Text>
           </Box>
         </Box>
       </Box>
@@ -246,8 +264,8 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Text color="cyan" bold>{'Add allow-list entry'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
-          <Text color="gray">{'Examples: 203.0.113.5 — 198.51.100.0/24 — home.example.com — 2001:db8::/32'}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'Examples: 203.0.113.5 — 198.51.100.0/24 — home.example.com — 2001:db8::/32'}</Text>
           <Box marginTop={1}>
             <Text color="cyan">{'> '}</Text>
             <TextInput
@@ -260,7 +278,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
           {!!entryError && (
             <Text color="red">{`  ${entryError}`}</Text>
           )}
-          <Text color="gray" dimColor>{'[Enter] add   [Esc] back'}</Text>
+          <Text color={mutedColor}>{'[Enter] add   [Esc] back'}</Text>
         </Box>
       </Box>
     );
@@ -272,28 +290,34 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Text color="cyan" bold>{'Step 2 of 4 — Run this on your VPS'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">{'Open a terminal on a machine with SSH access to the VPS and paste:'}</Text>
-          <Box marginTop={1} flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
+          <Box marginTop={1} flexDirection="column" borderStyle="single" borderColor={mutedColor} paddingX={1}>
             <Text color="green">{`ssh ${target} 'bash -s' <<'PGMSETUP'`}</Text>
             {built.script.split('\n').slice(0, 60).map((line, i) => (
-              <Text key={i} color="gray">{line}</Text>
+              <Text key={i} color={mutedColor}>{line}</Text>
             ))}
             {built.script.split('\n').length > 60 && (
-              <Text color="yellow" dimColor>{`  … (${built.script.split('\n').length - 60} more lines — full script is generated, copy from your terminal scroll-back if needed) …`}</Text>
+              <Text color="yellow">{`  … (${built.script.split('\n').length - 60} more lines — full script is generated, copy from your terminal scroll-back if needed) …`}</Text>
             )}
             <Text color="green">{'PGMSETUP'}</Text>
           </Box>
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'What this does (idempotent — safe to re-run):'}</Text>
+            <Text color={mutedColor}>{'What this does (idempotent — safe to re-run):'}</Text>
             <Text color="white">{"  1. listen_addresses = '*'   (postgresql.conf)"}</Text>
             <Text color="white">{`  2. host all ${instance.superuser} <each-entry> scram-sha-256   (pg_hba.conf)`}</Text>
             <Text color="white">{`  3. ufw / firewall-cmd allow ${instance.port}/tcp   (firewall)`}</Text>
             <Text color="white">{'  4. systemctl reload postgresql   (or restart if listen flipped)'}</Text>
           </Box>
+          {!!savedPath && (
+            <Box marginTop={1}>
+              <Text color="green">{`✓ Script saved → ${savedPath}`}</Text>
+            </Box>
+          )}
           <Box marginTop={1}>
+            <Text color="cyan" bold>{'[S] '}</Text><Text color="white">{'save script to file   '}</Text>
             <Text color="green" bold>{'[Enter] '}</Text><Text color="white">{'I have run it — go to test   '}</Text>
-            <Text color="gray" bold>{'[Esc] '}</Text><Text color="gray">{'edit allow-list'}</Text>
+            <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'edit allow-list'}</Text>
           </Box>
         </Box>
       </Box>
@@ -305,12 +329,12 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Text color="cyan" bold>{'Step 3 of 4 — Test connection'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">
             {'Press '}<Text color="green" bold>{'[Enter]'}</Text>
             {` to probe TCP ${host}:${instance.port} from this machine.`}
           </Text>
-          <Text color="gray" dimColor>{'  [Esc] back to review'}</Text>
+          <Text color={mutedColor}>{'  [Esc] back to review'}</Text>
         </Box>
       </Box>
     );
@@ -322,7 +346,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
         <Box borderStyle="round" borderColor="cyan" paddingX={2} flexDirection="column">
           <Box>
             <Text color="yellow"><Spinner type="dots" /></Text>
-            <Text color="gray">{`  Probing ${host}:${instance.port}…`}</Text>
+            <Text color={mutedColor}>{`  Probing ${host}:${instance.port}…`}</Text>
           </Box>
         </Box>
       </Box>
@@ -334,11 +358,11 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="green" paddingX={2} flexDirection="column">
           <Text color="green" bold>{'✓  Step 4 of 4 — Connection successful'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">{`TCP handshake on ${host}:${instance.port} took ${probe.durationMs}ms.`}</Text>
-          {!!resolved && <Text color="gray">{`  Resolved ${host} → ${resolved}`}</Text>}
+          {!!resolved && <Text color={mutedColor}>{`  Resolved ${host} → ${resolved}`}</Text>}
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'Next — verify auth from a real psql client:'}</Text>
+            <Text color={mutedColor}>{'Next — verify auth from a real psql client:'}</Text>
             <Text color="cyan">{`  psql -h ${host} -p ${instance.port} -U ${instance.superuser} -d postgres`}</Text>
           </Box>
           <Box marginTop={1} flexDirection="column">
@@ -357,11 +381,11 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       <Box flexDirection="column">
         <Box borderStyle="round" borderColor="red" paddingX={2} flexDirection="column">
           <Text color="red" bold>{`✗  Connection failed (${probe.code})`}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Text color="white">{probe.message}</Text>
-          {!!resolved && <Text color="gray">{`  Resolved ${host} → ${resolved}`}</Text>}
+          {!!resolved && <Text color={mutedColor}>{`  Resolved ${host} → ${resolved}`}</Text>}
           <Box marginTop={1} flexDirection="column">
-            <Text color="gray">{'Most common causes (in order):'}</Text>
+            <Text color={mutedColor}>{'Most common causes (in order):'}</Text>
             {probe.code === 'timeout' && (
               <>
                 <Text color="white">{'  1. Cloud provider security group (AWS / GCP / DigitalOcean) — open inbound TCP ' + instance.port}</Text>
@@ -388,7 +412,7 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
           </Box>
           <Box marginTop={1}>
             <Text color="green" bold>{'[R / Enter] '}</Text><Text color="white">{'retry test   '}</Text>
-            <Text color="gray" bold>{'[Esc] '}</Text><Text color="gray">{'back to review'}</Text>
+            <Text color={mutedColor} bold>{'[Esc] '}</Text><Text color={mutedColor}>{'back to review'}</Text>
           </Box>
         </Box>
         <Keybindings bindings={[

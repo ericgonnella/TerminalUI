@@ -8,6 +8,7 @@ import { listDatabases, createDatabase, dropDatabase } from '../services/databas
 import { useAsync }         from '../hooks/useAsync';
 import type { Navigation }  from '../hooks/useNavigation';
 import type { DatabaseInfo, Instance } from '../types';
+import { mutedColor } from '../theme';
 
 type Mode = 'list' | 'create-name' | 'confirm-drop' | 'busy';
 
@@ -98,13 +99,13 @@ export const DatabasesScreen: React.FC<DatabasesScreenProps> = ({
         <Box>
           <Text bold color="blue">{'NAME                OWNER           SIZE'}</Text>
         </Box>
-        <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+        <Text color={mutedColor}>{'─'.repeat(60)}</Text>
         {dbState.loading && (
-          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color="gray">{'  Loading...'}</Text></Box>
+          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color={mutedColor}>{'  Loading...'}</Text></Box>
         )}
         {dbState.error && <Text color="red">{`  Error: ${dbState.error}`}</Text>}
         {!dbState.loading && dbs.length === 0 && (
-          <Text color="gray" dimColor>{'  No user databases.'}</Text>
+          <Text color={mutedColor}>{'  No user databases.'}</Text>
         )}
         {dbs.map((db, i) => {
           const isSel = i === selected;
@@ -113,8 +114,8 @@ export const DatabasesScreen: React.FC<DatabasesScreenProps> = ({
               <Text color={isSel ? 'cyan' : 'white'} bold={isSel}>
                 {`${isSel ? '▶ ' : '  '}${db.name.padEnd(20)}`}
               </Text>
-              <Text color="gray">{db.owner.padEnd(16)}</Text>
-              <Text color="gray">{db.sizePretty.padEnd(12)}</Text>
+              <Text color={mutedColor}>{db.owner.padEnd(16)}</Text>
+              <Text color={mutedColor}>{db.sizePretty.padEnd(12)}</Text>
 
             </Box>
           );
@@ -149,7 +150,7 @@ export const DatabasesScreen: React.FC<DatabasesScreenProps> = ({
         </Box>
       )}
 
-      {!!opMsg && <Box marginBottom={1}><Text color="gray" dimColor>{`  ${opMsg}`}</Text></Box>}
+      {!!opMsg && <Box marginBottom={1}><Text color={mutedColor}>{`  ${opMsg}`}</Text></Box>}
 
       <Keybindings bindings={[
         { key: '↑↓',   label: 'navigate'      },

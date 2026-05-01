@@ -19,6 +19,7 @@ import { ProvisionAppScreen }      from './screens/ProvisionAppScreen';
 import { RemoteAccessScreen }      from './screens/RemoteAccessScreen';
 import { HostedSetupScreen }       from './screens/HostedSetupScreen';
 import { CloudflareTunnelScreen }  from './screens/CloudflareTunnelScreen';
+import { ProjectDatabaseScreen }   from './screens/ProjectDatabaseScreen';
 import { detectPostgres }     from './services/pgDetect';
 
 interface AppProps {
@@ -163,6 +164,15 @@ export const App: React.FC<AppProps> = ({ pgCtlBin: initialPgCtl, initdbBin: ini
           <CloudflareTunnelScreen
             nav={nav}
             instance={screen.instance}
+          />
+        );
+      case 'project-database':
+        return (
+          <ProjectDatabaseScreen
+            nav={nav}
+            instances={instances}
+            instance={screen.instance}
+            pgCtlBin={pgCtlBin}
           />
         );
       default:

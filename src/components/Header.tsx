@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import { mutedColor } from '../theme';
 
 interface HeaderProps {
   title:    string;
@@ -24,12 +25,12 @@ export const Header: React.FC<HeaderProps> = React.memo(function Header({ title,
     <Box borderStyle="round" borderColor="cyan" paddingX={2} marginBottom={1}>
       <Text bold color="cyan">{'⚡ '}</Text>
       <Text bold color="white">{title}</Text>
-      <Text color="gray">{'  ─  '}</Text>
-      <Text color="gray">{subtitle}</Text>
-      <Text color="gray">{'    '}</Text>
+      <Text color={mutedColor}>{'  ─  '}</Text>
+      <Text color={mutedColor}>{subtitle}</Text>
+      <Text color={mutedColor}>{'    '}</Text>
       <Text color="green">{'●'}</Text>
       <Text color="green" bold>{' LIVE'}</Text>
-      <Text color="gray" dimColor>{'    [q] quit'}</Text>
+      <Text color={mutedColor}>{'    [q] quit'}</Text>
     </Box>
   );
 });

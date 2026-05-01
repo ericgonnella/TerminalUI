@@ -15,6 +15,7 @@ import { changeRolePassword, listRoles } from '../services/users';
 import { useAsync }       from '../hooks/useAsync';
 import type { Navigation } from '../hooks/useNavigation';
 import type { Instance }  from '../types';
+import { mutedColor } from '../theme';
 
 type Mode =
   | 'view'
@@ -193,10 +194,10 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
           <Text bold color="blue">{'Database: '}</Text>
           <Text bold color="cyan">{currentDb}</Text>
         </Box>
-        <Text color="gray">{'─'.repeat(54)}</Text>
+        <Text color={mutedColor}>{'─'.repeat(54)}</Text>
 
         {detailState.loading && (
-          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color="gray">{'  Loading...'}</Text></Box>
+          <Box><Text color="yellow"><Spinner type="dots" /></Text><Text color={mutedColor}>{'  Loading...'}</Text></Box>
         )}
         {!!detailState.error && (
           <Text color="red">{`  Error: ${detailState.error}`}</Text>
@@ -205,47 +206,47 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
         {!!detail && (
           <>
             <Box flexDirection="row">
-              <Text color="gray">{'Owner:            '}</Text>
+              <Text color={mutedColor}>{'Owner:            '}</Text>
               <Text color="white">{detail.owner}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Encoding:         '}</Text>
+              <Text color={mutedColor}>{'Encoding:         '}</Text>
               <Text color="white">{detail.encoding}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Collation:        '}</Text>
+              <Text color={mutedColor}>{'Collation:        '}</Text>
               <Text color="white">{detail.collation}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Locale (LC_CTYPE): '}</Text>
+              <Text color={mutedColor}>{'Locale (LC_CTYPE): '}</Text>
               <Text color="white">{detail.ctypeLocale}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Tablespace:       '}</Text>
+              <Text color={mutedColor}>{'Tablespace:       '}</Text>
               <Text color="white">{detail.tablespace}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Size:             '}</Text>
+              <Text color={mutedColor}>{'Size:             '}</Text>
               <Text color="green">{detail.sizePretty}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Active connections: '}</Text>
+              <Text color={mutedColor}>{'Active connections: '}</Text>
               <Text color={detail.activeConnections > 0 ? 'yellow' : 'white'}>
                 {String(detail.activeConnections)}
               </Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Connection limit: '}</Text>
+              <Text color={mutedColor}>{'Connection limit: '}</Text>
               <Text color="white">{connLimitLabel(detail.connectionLimit)}</Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Allow connections: '}</Text>
+              <Text color={mutedColor}>{'Allow connections: '}</Text>
               <Text color={detail.allowConnections ? 'green' : 'red'}>
                 {detail.allowConnections ? 'yes' : 'no'}
               </Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Is template:      '}</Text>
+              <Text color={mutedColor}>{'Is template:      '}</Text>
               <Text color="white">{detail.isTemplate ? 'yes' : 'no'}</Text>
             </Box>
           </>
@@ -256,7 +257,7 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
       {mode === 'edit-name' && (
         <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="yellow" bold>{'Rename database'}</Text>
-          <Text color="gray" dimColor>{'Press Enter to confirm, Esc to cancel.'}</Text>
+          <Text color={mutedColor}>{'Press Enter to confirm, Esc to cancel.'}</Text>
           <Box flexDirection="row" marginTop={1}>
             <Text color="white">{'New name: '}</Text>
             <TextInput
@@ -274,9 +275,9 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
         <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="yellow" bold>{'Change owner'}</Text>
           {roles.length > 0 && (
-            <Text color="gray" dimColor>{`Roles: ${roles.slice(0, 8).join(', ')}${roles.length > 8 ? ', …' : ''}`}</Text>
+            <Text color={mutedColor}>{`Roles: ${roles.slice(0, 8).join(', ')}${roles.length > 8 ? ', …' : ''}`}</Text>
           )}
-          <Text color="gray" dimColor>{'Press Enter to confirm, Esc to cancel.'}</Text>
+          <Text color={mutedColor}>{'Press Enter to confirm, Esc to cancel.'}</Text>
           <Box flexDirection="row" marginTop={1}>
             <Text color="white">{'New owner: '}</Text>
             <TextInput
@@ -293,9 +294,9 @@ export const DatabaseDetailScreen: React.FC<Props> = ({ nav, instance, database 
       {(mode === 'edit-password' || mode === 'edit-password-confirm') && (
         <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="yellow" bold>{`Change password for owner "${detail?.owner ?? '?'}"`}</Text>
-          <Text color="gray" dimColor>{'Press Enter to confirm, Esc to cancel.'}</Text>
+          <Text color={mutedColor}>{'Press Enter to confirm, Esc to cancel.'}</Text>
           <Box flexDirection="row" marginTop={1}>
-            <Text color={mode === 'edit-password' ? 'white' : 'gray'}>
+            <Text color={mode === 'edit-password' ? 'white' : mutedColor}>
               {'New password:     '}
             </Text>
             {mode === 'edit-password' ? (

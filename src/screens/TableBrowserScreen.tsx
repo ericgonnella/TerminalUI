@@ -6,6 +6,7 @@ import { listSchemas, listTables, describeTable, sampleRows } from '../services/
 import { useAsync }     from '../hooks/useAsync';
 import type { Navigation }  from '../hooks/useNavigation';
 import type { TableInfo, ColumnInfo, Instance } from '../types';
+import { mutedColor } from '../theme';
 
 type Pane = 'schemas' | 'tables' | 'columns' | 'data';
 
@@ -89,7 +90,7 @@ export const TableBrowserScreen: React.FC<TableBrowserScreenProps> = ({
       <Box>
         <Text bold color="blue">{'COLUMN              TYPE                NOT NULL  DEFAULT'}</Text>
       </Box>
-      <Text color="gray" dimColor>{'─'.repeat(64)}</Text>
+      <Text color={mutedColor}>{'─'.repeat(64)}</Text>
       {colsState.loading && <Box><Text color="yellow"><Spinner type="dots" /></Text></Box>}
       {cols.map((c, i) => {
         const isSel = i === selCol;
@@ -98,9 +99,9 @@ export const TableBrowserScreen: React.FC<TableBrowserScreenProps> = ({
             <Text color={isSel ? 'cyan' : 'white'} bold={isSel}>
               {`${isSel ? '▶ ' : '  '}${c.name.padEnd(20)}`}
             </Text>
-            <Text color="gray">{c.dataType.padEnd(20)}</Text>
-            <Text color={c.nullable ? 'gray' : 'yellow'}>{(c.nullable ? 'yes' : 'NO').padEnd(10)}</Text>
-            <Text color="gray" dimColor>{c.defaultValue ?? '-'}</Text>
+            <Text color={mutedColor}>{c.dataType.padEnd(20)}</Text>
+            <Text color={c.nullable ? mutedColor : 'yellow'}>{(c.nullable ? 'yes' : 'NO').padEnd(10)}</Text>
+            <Text color={mutedColor}>{c.defaultValue ?? '-'}</Text>
           </Box>
         );
       })}
@@ -116,23 +117,23 @@ export const TableBrowserScreen: React.FC<TableBrowserScreenProps> = ({
           {colNames.slice(0, 4).map(c => (
             <Text key={c} bold color="blue">{c.substring(0, colWidth - 1).padEnd(colWidth)}</Text>
           ))}
-          {colNames.length > 4 && <Text color="gray" dimColor>{'...'}</Text>}
+          {colNames.length > 4 && <Text color={mutedColor}>{'...'}</Text>}
         </Box>
-        <Text color="gray" dimColor>{'─'.repeat(72)}</Text>
+        <Text color={mutedColor}>{'─'.repeat(72)}</Text>
         {rowsState.loading && <Box><Text color="yellow"><Spinner type="dots" /></Text></Box>}
         {!rowsState.loading && displayRows.length === 0 && (
-          <Text color="gray" dimColor>{'  (empty)'}</Text>
+          <Text color={mutedColor}>{'  (empty)'}</Text>
         )}
         {displayRows.map((row, ri) => (
           <Box key={ri} flexDirection="row">
             {colNames.slice(0, 4).map(c => {
               const val = row[c];
               const s   = val === null ? 'NULL' : String(val);
-              return <Text key={c} color={val === null ? 'gray' : 'white'}>{s.substring(0, colWidth - 1).padEnd(colWidth)}</Text>;
+              return <Text key={c} color={val === null ? mutedColor : 'white'}>{s.substring(0, colWidth - 1).padEnd(colWidth)}</Text>;
             })}
           </Box>
         ))}
-        <Text color="gray" dimColor>{`  Page ${page + 1}${hasMore ? '+' : ''}`}</Text>
+        <Text color={mutedColor}>{`  Page ${page + 1}${hasMore ? '+' : ''}`}</Text>
       </Box>
     );
   };
@@ -141,22 +142,22 @@ export const TableBrowserScreen: React.FC<TableBrowserScreenProps> = ({
     <Box flexDirection="column">
       {/* Breadcrumb-like pane header */}
       <Box marginBottom={1}>
-        <Text color={pane === 'schemas' ? 'cyan' : 'gray'} bold={pane === 'schemas'}>{'Schemas'}</Text>
+        <Text color={pane === 'schemas' ? 'cyan' : mutedColor} bold={pane === 'schemas'}>{'Schemas'}</Text>
         {pane !== 'schemas' && (
           <>
-            <Text color="gray" dimColor>{' › '}</Text>
-            <Text color={pane === 'tables' ? 'cyan' : 'gray'} bold={pane === 'tables'}>{schema}</Text>
+            <Text color={mutedColor}>{' › '}</Text>
+            <Text color={pane === 'tables' ? 'cyan' : mutedColor} bold={pane === 'tables'}>{schema}</Text>
           </>
         )}
         {(pane === 'columns' || pane === 'data') && (
           <>
-            <Text color="gray" dimColor>{' › '}</Text>
-            <Text color={pane === 'columns' ? 'cyan' : 'gray'} bold={pane === 'columns'}>{tableName}</Text>
+            <Text color={mutedColor}>{' › '}</Text>
+            <Text color={pane === 'columns' ? 'cyan' : mutedColor} bold={pane === 'columns'}>{tableName}</Text>
           </>
         )}
         {pane === 'data' && (
           <>
-            <Text color="gray" dimColor>{' › '}</Text>
+            <Text color={mutedColor}>{' › '}</Text>
             <Text color="cyan" bold>{'Data'}</Text>
           </>
         )}
@@ -166,7 +167,7 @@ export const TableBrowserScreen: React.FC<TableBrowserScreenProps> = ({
       {pane === 'schemas' && (
         <Box borderStyle="round" borderColor="blue" flexDirection="column" paddingX={1} marginBottom={1}>
           <Text bold color="blue">{'SCHEMAS'}</Text>
-          <Text color="gray" dimColor>{'─'.repeat(40)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(40)}</Text>
           {schemasState.loading && <Box><Text color="yellow"><Spinner type="dots" /></Text></Box>}
           {schemas.map((s, i) => {
             const isSel = i === selSchema;
@@ -187,10 +188,10 @@ export const TableBrowserScreen: React.FC<TableBrowserScreenProps> = ({
           <Box>
             <Text bold color="blue">{'TABLE               ROWS (EST)   SIZE'}</Text>
           </Box>
-          <Text color="gray" dimColor>{'─'.repeat(50)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(50)}</Text>
           {tablesState.loading && <Box><Text color="yellow"><Spinner type="dots" /></Text></Box>}
           {!tablesState.loading && tables.length === 0 && (
-            <Text color="gray" dimColor>{'  No tables in this schema.'}</Text>
+            <Text color={mutedColor}>{'  No tables in this schema.'}</Text>
           )}
           {tables.map((t, i) => {
             const isSel = i === selTable;
@@ -199,8 +200,8 @@ export const TableBrowserScreen: React.FC<TableBrowserScreenProps> = ({
                 <Text color={isSel ? 'cyan' : 'white'} bold={isSel}>
                   {`${isSel ? '▶ ' : '  '}${t.name.padEnd(20)}`}
                 </Text>
-                <Text color="gray">{String(t.rowEstimate ?? '-').padEnd(13)}</Text>
-                <Text color="gray">{t.sizePretty ?? '-'}</Text>
+                <Text color={mutedColor}>{String(t.rowEstimate ?? '-').padEnd(13)}</Text>
+                <Text color={mutedColor}>{t.sizePretty ?? '-'}</Text>
               </Box>
             );
           })}

@@ -12,6 +12,7 @@ import {
 } from '../services/appProvision';
 import type { Navigation } from '../hooks/useNavigation';
 import type { Instance }   from '../types';
+import { mutedColor } from '../theme';
 
 type Step = 'db-name' | 'user-name' | 'cors' | 'confirm' | 'running' | 'done' | 'error';
 
@@ -155,25 +156,25 @@ export const ProvisionAppScreen: React.FC<ProvisionAppScreenProps> = ({ nav, ins
       {/* Header / context panel */}
       <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
         <Text bold color="cyan">{'Provision app database for VPS backend'}</Text>
-        <Text color="gray" dimColor>{'Generates a dedicated DB + role + DATABASE_URL for a Netlify-friendly stack.'}</Text>
+        <Text color={mutedColor}>{'Generates a dedicated DB + role + DATABASE_URL for a Netlify-friendly stack.'}</Text>
         <Box marginTop={1}>
-          <Text color="gray">{'Instance: '}</Text>
+          <Text color={mutedColor}>{'Instance: '}</Text>
           <Text color="white" bold>{instance.name}</Text>
-          <Text color="gray">{'   Host: '}</Text>
+          <Text color={mutedColor}>{'   Host: '}</Text>
           <Text color={isLoopback ? 'green' : 'yellow'}>{host}</Text>
-          <Text color="gray">{'   Port: '}</Text>
+          <Text color={mutedColor}>{'   Port: '}</Text>
           <Text color="white">{String(instance.port)}</Text>
         </Box>
         {showHostWarning && (
           <Box marginTop={1} flexDirection="column">
             <Text color="yellow" bold>{'⚠  Network exposure check'}</Text>
-            <Text color="yellow" dimColor>
+            <Text color="yellow">
               {'   Per the integration spec, PostgreSQL should bind to 127.0.0.1 only.'}
             </Text>
-            <Text color="yellow" dimColor>
+            <Text color="yellow">
               {'   The generated DATABASE_URL pins host=127.0.0.1 regardless, but make'}
             </Text>
-            <Text color="yellow" dimColor>
+            <Text color="yellow">
               {'   sure `ss -lntp | grep ' + String(instance.port) + '` shows 127.0.0.1 on the VPS.'}
             </Text>
           </Box>
@@ -184,7 +185,7 @@ export const ProvisionAppScreen: React.FC<ProvisionAppScreenProps> = ({ nav, ins
       {step === 'db-name' && (
         <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="white" bold>{'Application database name'}</Text>
-          <Text color="gray" dimColor>{'Lowercase letters, digits, underscore. Max 63 chars.'}</Text>
+          <Text color={mutedColor}>{'Lowercase letters, digits, underscore. Max 63 chars.'}</Text>
           <Box marginTop={1}>
             <Text color="white">{'> '}</Text>
             <TextInput value={appDb} onChange={setAppDb} onSubmit={onDbSubmit} placeholder="tracker_test" />
@@ -197,7 +198,7 @@ export const ProvisionAppScreen: React.FC<ProvisionAppScreenProps> = ({ nav, ins
       {step === 'user-name' && (
         <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="white" bold>{'Application role (login user)'}</Text>
-          <Text color="gray" dimColor>{`A non-superuser, login-only role. Must NOT be "${instance.superuser}".`}</Text>
+          <Text color={mutedColor}>{`A non-superuser, login-only role. Must NOT be "${instance.superuser}".`}</Text>
           <Box marginTop={1}>
             <Text color="white">{'> '}</Text>
             <TextInput value={appUser} onChange={setAppUser} onSubmit={onUserSubmit} placeholder={`${appDb || 'app'}_app`} />
@@ -210,7 +211,7 @@ export const ProvisionAppScreen: React.FC<ProvisionAppScreenProps> = ({ nav, ins
       {step === 'cors' && (
         <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="white" bold>{'Netlify origin for CORS_ORIGIN (optional)'}</Text>
-          <Text color="gray" dimColor>{'Used in the generated backend .env. Leave default if unsure — you can edit later.'}</Text>
+          <Text color={mutedColor}>{'Used in the generated backend .env. Leave default if unsure — you can edit later.'}</Text>
           <Box marginTop={1}>
             <Text color="white">{'> '}</Text>
             <TextInput value={corsOrigin} onChange={setCorsOrigin} onSubmit={onCorsSubmit} placeholder="https://your-site.netlify.app" />
@@ -222,18 +223,18 @@ export const ProvisionAppScreen: React.FC<ProvisionAppScreenProps> = ({ nav, ins
       {step === 'confirm' && (
         <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="yellow" bold>{'Ready to provision'}</Text>
-          <Text color="gray">{'─'.repeat(56)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(56)}</Text>
           <Box flexDirection="column" marginTop={1}>
-            <Box><Text color="gray">{'Database:    '}</Text><Text color="cyan" bold>{appDb}</Text></Box>
-            <Box><Text color="gray">{'Role:        '}</Text><Text color="cyan" bold>{appUser}</Text></Box>
-            <Box><Text color="gray">{'Owner:       '}</Text><Text color="white">{`role "${appUser}"`}</Text></Box>
-            <Box><Text color="gray">{'Password:    '}</Text><Text color="white">{'48-char hex (auto-generated, stored in vault)'}</Text></Box>
-            <Box><Text color="gray">{'CORS_ORIGIN: '}</Text><Text color="white">{corsOrigin}</Text></Box>
+            <Box><Text color={mutedColor}>{'Database:    '}</Text><Text color="cyan" bold>{appDb}</Text></Box>
+            <Box><Text color={mutedColor}>{'Role:        '}</Text><Text color="cyan" bold>{appUser}</Text></Box>
+            <Box><Text color={mutedColor}>{'Owner:       '}</Text><Text color="white">{`role "${appUser}"`}</Text></Box>
+            <Box><Text color={mutedColor}>{'Password:    '}</Text><Text color="white">{'48-char hex (auto-generated, stored in vault)'}</Text></Box>
+            <Box><Text color={mutedColor}>{'CORS_ORIGIN: '}</Text><Text color="white">{corsOrigin}</Text></Box>
           </Box>
           <Box marginTop={1}>
-            <Text color="green" bold>{'[Y]'}</Text><Text color="gray">{' provision   '}</Text>
-            <Text color="red" bold>{'[N]'}</Text><Text color="gray">{' edit names   '}</Text>
-            <Text color="gray" dimColor>{'Esc cancel'}</Text>
+            <Text color="green" bold>{'[Y]'}</Text><Text color={mutedColor}>{' provision   '}</Text>
+            <Text color="red" bold>{'[N]'}</Text><Text color={mutedColor}>{' edit names   '}</Text>
+            <Text color={mutedColor}>{'Esc cancel'}</Text>
           </Box>
         </Box>
       )}
@@ -249,7 +250,7 @@ export const ProvisionAppScreen: React.FC<ProvisionAppScreenProps> = ({ nav, ins
         <Box borderStyle="round" borderColor="red" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text color="red" bold>{'✗ Provisioning failed'}</Text>
           <Text color="red">{error ?? 'Unknown error.'}</Text>
-          <Box marginTop={1}><Text color="gray" dimColor>{'Press Esc / Enter to go back.'}</Text></Box>
+          <Box marginTop={1}><Text color={mutedColor}>{'Press Esc / Enter to go back.'}</Text></Box>
         </Box>
       )}
 
@@ -257,21 +258,21 @@ export const ProvisionAppScreen: React.FC<ProvisionAppScreenProps> = ({ nav, ins
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2} marginBottom={1}>
             <Text color="green" bold>{'✓ App database provisioned'}</Text>
-            <Text color="gray">{'─'.repeat(56)}</Text>
+            <Text color={mutedColor}>{'─'.repeat(56)}</Text>
             <Box marginTop={1} flexDirection="column">
               <Box>
-                <Text color="gray">{'Database:  '}</Text>
+                <Text color={mutedColor}>{'Database:  '}</Text>
                 <Text color="cyan" bold>{result.appDb}</Text>
-                {result.databaseExisted && <Text color="yellow" dimColor>{'  (already existed — preserved)'}</Text>}
+                {result.databaseExisted && <Text color="yellow">{'  (already existed — preserved)'}</Text>}
               </Box>
               <Box>
-                <Text color="gray">{'Role:      '}</Text>
+                <Text color={mutedColor}>{'Role:      '}</Text>
                 <Text color="cyan" bold>{result.appUser}</Text>
                 {result.roleExisted && !result.passwordWritten && (
-                  <Text color="yellow" dimColor>{'  (existed; password kept)'}</Text>
+                  <Text color="yellow">{'  (existed; password kept)'}</Text>
                 )}
                 {result.roleExisted && result.passwordWritten && (
-                  <Text color="yellow" dimColor>{'  (existed; password rotated)'}</Text>
+                  <Text color="yellow">{'  (existed; password rotated)'}</Text>
                 )}
               </Box>
             </Box>
@@ -282,22 +283,22 @@ export const ProvisionAppScreen: React.FC<ProvisionAppScreenProps> = ({ nav, ins
                 {reveal ? result.databaseUrl : buildRedactedAppDatabaseUrl(instance, result.appUser, result.appDb)}
               </Text>
               {reveal && (
-                <Text color="red" dimColor>{'  ⚠ Visible on screen — copy it now and press [R] to hide.'}</Text>
+                <Text color="red">{'  ⚠ Visible on screen — copy it now and press [R] to hide.'}</Text>
               )}
             </Box>
 
             <Box marginTop={1} flexDirection="column">
-              <Text color="gray" dimColor>{'For the VPS backend .env (NEVER expose to Netlify frontend):'}</Text>
-              <Text color="gray" dimColor>{`  DATABASE_URL=postgresql://${result.appUser}:****@127.0.0.1:${instance.port}/${result.appDb}`}</Text>
-              <Text color="gray" dimColor>{'  PORT=3100'}</Text>
-              <Text color="gray" dimColor>{`  CORS_ORIGIN=${corsOrigin}`}</Text>
+              <Text color={mutedColor}>{'For the VPS backend .env (NEVER expose to Netlify frontend):'}</Text>
+              <Text color={mutedColor}>{`  DATABASE_URL=postgresql://${result.appUser}:****@127.0.0.1:${instance.port}/${result.appDb}`}</Text>
+              <Text color={mutedColor}>{'  PORT=3100'}</Text>
+              <Text color={mutedColor}>{`  CORS_ORIGIN=${corsOrigin}`}</Text>
             </Box>
 
             {savedPath && (
               <Box marginTop={1} flexDirection="column">
                 <Text color="green">{'✓ Saved .env to:'}</Text>
                 <Text color="white">{`  ${savedPath}`}</Text>
-                <Text color="gray" dimColor>{'  Mode 0600. Move this file to your VPS backend (do NOT commit).'}</Text>
+                <Text color={mutedColor}>{'  Mode 0600. Move this file to your VPS backend (do NOT commit).'}</Text>
               </Box>
             )}
             {saveError && (

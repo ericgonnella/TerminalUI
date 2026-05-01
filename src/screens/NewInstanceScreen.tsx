@@ -16,6 +16,7 @@ import type { InstalledVersion } from '../services/pgDetect';
 import type { Navigation }     from '../hooks/useNavigation';
 import type { InstancesState } from '../hooks/useInstances';
 import type { Instance, InstallationType, LogEntry } from '../types';
+import { mutedColor } from '../theme';
 
 type Step = 'version' | 'placement' | 'name' | 'superuser' | 'port' | 'password' | 'password-confirm' | 'datadir' | 'running' | 'done' | 'error';
 type Phase = 'idle' | 'initdb' | 'configuring' | 'starting' | 'verifying' | 'complete';
@@ -64,8 +65,15 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   const [activeInitdb, setActiveInitdb] = useState(initdbBin);
   const [activePgCtl,  setActivePgCtl]  = useState(pgCtlBin);
 
+  // Guard against calling setState on an unmounted component from async
+  // callbacks (allInstalledVersions, execFile). Without this, Ink 3's
+  // reconciler can enter a broken render state causing the UI to freeze.
+  const mountedRef = useRef(true);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
+
   useEffect(() => {
     allInstalledVersions().then(versions => {
+      if (!mountedRef.current) return;
       setAvailableVersions(versions);
       // If more than one version exists, ask the user to choose before placement.
       // If there is only one (or none), skip straight to placement and use the
@@ -89,6 +97,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
   useEffect(() => {
     if (!activeInitdb) return;
     execFile(activeInitdb, ['--version'], (_err, stdout) => {
+      if (!mountedRef.current) return;
       const match = stdout?.match(/(\d+\.\d+)/);
       if (match) setPgVersion(match[1] ?? '');
     });
@@ -310,17 +319,20 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
     setStep('done');
   }, [name, superuser, port, password, dataDir, activePgCtl, activeInitdb, instances, appendLog, placement, pgVersion]);
 
-  const poppedRef = useRef(false);
-
   /** True when the failure is a Windows DLL loading error. */
   const isDllError = !!(error && (error.includes('0xC0000135') || error.includes('DLL_NOT_FOUND')));
 
   useInput((input, key) => {
-    // Only react to real keypresses, and only pop once per terminal screen.
+    // Only react to real keypresses.
     const hasKey = !!input || key.return || key.escape ||
                     key.upArrow || key.downArrow || key.leftArrow || key.rightArrow ||
                     key.tab || key.backspace || key.delete;
     if (!hasKey) return;
+
+    // Never navigate away while instance creation is in progress — the async
+    // operation holds references to state and would call setState on an
+    // unmounted component, corrupting Ink's render state.
+    if (step === 'running') return;
 
     // Version picker: ↑/↓ to move, Enter to confirm
     if (step === 'version') {
@@ -346,11 +358,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
         setStep('placement');
         return;
       }
-      if (key.escape) {
-        if (poppedRef.current) return;
-        poppedRef.current = true;
-        nav.pop();
-      }
+      if (key.escape) { nav.pop(); return; }
       return;
     }
 
@@ -366,19 +374,13 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
         setStep('name');
         return;
       }
-      if (key.escape) {
-        if (poppedRef.current) return;
-        poppedRef.current = true;
-        nav.pop();
-      }
+      if (key.escape) { nav.pop(); return; }
       return;
     }
 
     if (step === 'done' || step === 'error') {
-      if (poppedRef.current) return;
       // On DLL error: [G] navigates directly to the download screen
       if (isDllError && (input === 'g' || input === 'G')) {
-        poppedRef.current = true;
         nav.pop();
         nav.push({ name: 'download-pg' });
         return;
@@ -388,7 +390,6 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       // live connection test. Hosted instances are explicitly intended to be
       // reachable from off-host, so we treat this as the natural next step.
       if (step === 'done' && createdInstance && placement === 'hosted' && key.return) {
-        poppedRef.current = true;
         nav.pop();
         nav.push({ name: 'hosted-setup', instance: createdInstance });
         return;
@@ -396,20 +397,14 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       // [X] → set up external / remote access for the freshly-created instance
       // (still available for local instances that the user later wants to expose)
       if (step === 'done' && createdInstance && (input === 'x' || input === 'X')) {
-        poppedRef.current = true;
         nav.pop();
         nav.push({ name: 'remote-access', instance: createdInstance });
         return;
       }
-      poppedRef.current = true;
       nav.pop();
       return;
     }
-    if (key.escape) {
-      if (poppedRef.current) return;
-      poppedRef.current = true;
-      nav.pop();
-    }
+    if (key.escape) { nav.pop(); return; }
   });
 
   return (
@@ -418,15 +413,15 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
       {step === 'version' && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan">{'Select PostgreSQL version'}</Text>
-          <Text color="gray" dimColor>{'Use ↑ / ↓ to move, Enter to confirm'}</Text>
-          <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+          <Text color={mutedColor}>{'Use ↑ / ↓ to move, Enter to confirm'}</Text>
+          <Text color={mutedColor}>{'─'.repeat(60)}</Text>
           <Box flexDirection="column" marginTop={1}>
             {availableVersions.map((v, i) => (
               <Box key={v.initdb}>
-                <Text color={i === versionIdx ? 'cyan' : 'gray'} bold={i === versionIdx}>
+                <Text color={i === versionIdx ? 'cyan' : mutedColor} bold={i === versionIdx}>
                   {i === versionIdx ? '▶ ' : '  '}
                 </Text>
-                <Text color={i === versionIdx ? 'white' : 'gray'} bold={i === versionIdx}>
+                <Text color={i === versionIdx ? 'white' : mutedColor} bold={i === versionIdx}>
                   {v.label}
                 </Text>
               </Box>
@@ -440,27 +435,27 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
           <Text bold color="cyan">{'Where is this instance running?'}</Text>
           {pgVersion ? (
-            <Text color="gray" dimColor>{`Using PostgreSQL ${pgVersion}  (${activeInitdb})`}</Text>
+            <Text color={mutedColor}>{`Using PostgreSQL ${pgVersion}  (${activeInitdb})`}</Text>
           ) : (
-            <Text color="gray" dimColor>{`initdb: ${activeInitdb || '(not found)'}`}</Text>
+            <Text color={mutedColor}>{`initdb: ${activeInitdb || '(not found)'}`}</Text>
           )}
-          <Text color="gray" dimColor>{'─'.repeat(60)}</Text>
+          <Text color={mutedColor}>{'─'.repeat(60)}</Text>
           <Box flexDirection="column" marginTop={1}>
             <Box>
               <Text color="green" bold>{'[L] '}</Text>
               <Text color="white" bold>{'Local / personal machine'}</Text>
             </Box>
-            <Text color="gray" dimColor>{'     Bound to 127.0.0.1. Password recommended (min 8 chars).'}</Text>
-            <Text color="gray" dimColor>{'     Credentials stored encrypted in your user keychain / vault.'}</Text>
+            <Text color={mutedColor}>{'     Bound to 127.0.0.1. Password recommended (min 8 chars).'}</Text>
+            <Text color={mutedColor}>{'     Credentials stored encrypted in your user keychain / vault.'}</Text>
           </Box>
           <Box flexDirection="column" marginTop={1}>
             <Box>
               <Text color="yellow" bold>{'[H] '}</Text>
               <Text color="white" bold>{'Hosted / shared server'}</Text>
             </Box>
-            <Text color="gray" dimColor>{'     Network-reachable. Strong password REQUIRED (min 12, 3+ char classes).'}</Text>
-            <Text color="gray" dimColor>{'     Automatically sets listen_addresses=*, remote pg_hba.conf rules, and'}</Text>
-            <Text color="gray" dimColor>{'     opens the port in ufw/firewall-cmd. Audit log enabled.'}</Text>
+            <Text color={mutedColor}>{'     Network-reachable. Strong password REQUIRED (min 12, 3+ char classes).'}</Text>
+            <Text color={mutedColor}>{'     Automatically sets listen_addresses=*, remote pg_hba.conf rules, and'}</Text>
+            <Text color={mutedColor}>{'     opens the port in ufw/firewall-cmd. Audit log enabled.'}</Text>
           </Box>
         </Box>
       )}
@@ -469,7 +464,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
           (terminals shorter than the full output end up scrolling endlessly). */}
       {step !== 'done' && step !== 'placement' && step !== 'version' && (
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={2} marginBottom={1}>
-          <Text bold color="cyan" dimColor>
+          <Text bold color="cyan">
             {'Step '}
             {step === 'name'      ? '1' :
              step === 'superuser' ? '2' :
@@ -485,7 +480,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
 
           {/* Step 1 — Name */}
           <Box marginTop={1} flexDirection="row">
-            <Text color={step === 'name' ? 'white' : 'gray'} bold={step === 'name'}>
+            <Text color={step === 'name' ? 'white' : mutedColor} bold={step === 'name'}>
               {'Instance name:  '}
             </Text>
             {step === 'name' ? (
@@ -504,7 +499,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
           {(step === 'superuser' || step === 'port' || step === 'password' || step === 'password-confirm' || step === 'datadir' || step === 'running' || step === 'error') && (
             <Box flexDirection="column">
               <Box flexDirection="row">
-                <Text color={step === 'superuser' ? 'white' : 'gray'} bold={step === 'superuser'}>
+                <Text color={step === 'superuser' ? 'white' : mutedColor} bold={step === 'superuser'}>
                   {'Superuser:      '}
                 </Text>
                 {step === 'superuser' ? (
@@ -519,7 +514,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
                 )}
               </Box>
               {step === 'superuser' && !superuserError && (
-                <Text color="gray" dimColor>
+                <Text color={mutedColor}>
                   {'  Bootstrap role created by initdb. Letters, digits, underscores; must start with a letter or _.'}
                 </Text>
               )}
@@ -533,7 +528,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
           {(step === 'port' || step === 'password' || step === 'password-confirm' || step === 'datadir' || step === 'running' || step === 'error') && (
             <Box flexDirection="column">
               <Box flexDirection="row">
-                <Text color={step === 'port' ? 'white' : 'gray'} bold={step === 'port'}>
+                <Text color={step === 'port' ? 'white' : mutedColor} bold={step === 'port'}>
                   {'Port:           '}
                 </Text>
                 {step === 'port' ? (
@@ -557,7 +552,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
           {(step === 'password' || step === 'password-confirm' || step === 'datadir' || step === 'running' || step === 'error') && (
             <Box flexDirection="column">
               <Box flexDirection="row">
-                <Text color={step === 'password' ? 'white' : 'gray'} bold={step === 'password'}>
+                <Text color={step === 'password' ? 'white' : mutedColor} bold={step === 'password'}>
                   {'Password:         '}
                 </Text>
                 {step === 'password' ? (
@@ -568,7 +563,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
                     placeholder="(leave blank for no password)"
                   />
                 ) : (
-                  <Text color={password ? 'green' : 'gray'} dimColor={!password}>
+                  <Text color={password ? 'green' : mutedColor}>
                     {password ? '*'.repeat(Math.min(password.length, 12)) : '(no password — trust auth)'}
                   </Text>
                 )}
@@ -596,7 +591,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
           {/* Step 4 — Data dir */}
           {(step === 'datadir' || step === 'running' || step === 'error') && (
             <Box flexDirection="row">
-              <Text color={step === 'datadir' ? 'white' : 'gray'} bold={step === 'datadir'}>
+              <Text color={step === 'datadir' ? 'white' : mutedColor} bold={step === 'datadir'}>
                 {'Data directory: '}
               </Text>
               {step === 'datadir' ? (
@@ -649,11 +644,11 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
               const isDone     = myIdx < currentIdx;
               const isCurrent  = myIdx === currentIdx;
               const icon  = isDone ? '✓' : isCurrent ? '•' : '○';
-              const color = isDone ? 'green' : isCurrent ? 'yellow' : 'gray';
+              const color = isDone ? 'green' : isCurrent ? 'yellow' : mutedColor;
               return (
                 <Box key={p.id}>
                   <Text color={color} bold={isCurrent}>{`  ${icon} `}</Text>
-                  <Text color={color} dimColor={!isCurrent && !isDone}>{p.label}</Text>
+                  <Text color={color}>{p.label}</Text>
                 </Box>
               );
             })}
@@ -665,39 +660,39 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
         <Box flexDirection="column">
           <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={2}>
             <Text color="green" bold>{'✓ Instance created and running'}</Text>
-            <Text color="gray">{'─'.repeat(56)}</Text>
+            <Text color={mutedColor}>{'─'.repeat(56)}</Text>
             <Box flexDirection="row">
-              <Text color="gray">{'Instance:  '}</Text>
+              <Text color={mutedColor}>{'Instance:  '}</Text>
               <Text color="cyan" bold>{createdInstance.name}</Text>
-              <Text color="gray">{'   Port: '}</Text>
+              <Text color={mutedColor}>{'   Port: '}</Text>
               <Text color="white">{String(createdInstance.port)}</Text>
               {createdInstance.pgVersion && (
                 <>
-                  <Text color="gray">{'   PostgreSQL: '}</Text>
+                  <Text color={mutedColor}>{'   PostgreSQL: '}</Text>
                   <Text color="white">{createdInstance.pgVersion}</Text>
                 </>
               )}
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'User:      '}</Text>
+              <Text color={mutedColor}>{'User:      '}</Text>
               <Text color="white">{createdInstance.superuser}</Text>
-              <Text color="gray">{'   Password: '}</Text>
-              <Text color={createdInstance.hasPassword ? 'yellow' : 'gray'} dimColor={!createdInstance.hasPassword}>
+              <Text color={mutedColor}>{'   Password: '}</Text>
+              <Text color={createdInstance.hasPassword ? 'yellow' : mutedColor}>
                 {createdInstance.hasPassword ? '(set — use what you entered)' : '(trust auth — none required)'}
               </Text>
             </Box>
             <Box flexDirection="row">
-              <Text color="gray">{'Data dir:  '}</Text>
+              <Text color={mutedColor}>{'Data dir:  '}</Text>
               <Text color="white">{createdInstance.dataDir}</Text>
             </Box>
-            <Text color="gray">{'─'.repeat(56)}</Text>
-            <Text color="gray">{'Connection URL:'}</Text>
+            <Text color={mutedColor}>{'─'.repeat(56)}</Text>
+            <Text color={mutedColor}>{'Connection URL:'}</Text>
             <Text color="cyan">{
               createdInstance.hasPassword
                 ? `  postgresql://${createdInstance.superuser}:<your-password>@127.0.0.1:${createdInstance.port}/postgres`
                 : `  postgresql://${createdInstance.superuser}@127.0.0.1:${createdInstance.port}/postgres`
             }</Text>
-            <Text color="gray">{'psql:'}</Text>
+            <Text color={mutedColor}>{'psql:'}</Text>
             <Text color="cyan">{`  psql -h 127.0.0.1 -p ${createdInstance.port} -U ${createdInstance.superuser} -d postgres`}</Text>
           </Box>
           <Box marginTop={1} flexDirection="column">
@@ -716,8 +711,8 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
                   <Text color="white">{'Continue to guided hosted setup'}</Text>
                 </Box>
                 <Box>
-                  <Text color="gray" bold>{'[Esc / any key] '}</Text>
-                  <Text color="gray">{'Skip for now — return to Home (you can configure it later from the instance screen)'}</Text>
+                  <Text color={mutedColor} bold>{'[Esc / any key] '}</Text>
+                  <Text color={mutedColor}>{'Skip for now — return to Home (you can configure it later from the instance screen)'}</Text>
                 </Box>
               </>
             ) : (
@@ -726,7 +721,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
                   <Text color="yellow" bold>{'[X] '}</Text>
                   <Text color="white">{'Set up external access (allow remote IPs or expose via SSH tunnel)'}</Text>
                 </Box>
-                <Text color="gray" dimColor>{'Press any other key to return to Home.'}</Text>
+                <Text color={mutedColor}>{'Press any other key to return to Home.'}</Text>
               </>
             )}
           </Box>
@@ -739,7 +734,7 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
           {!!error && (
             <Box borderStyle="round" borderColor="red" paddingX={1} marginTop={1} flexDirection="column">
               {error.split('\n').filter(Boolean).map((line, i) => (
-                <Text key={i} color="red" dimColor>{line}</Text>
+                <Text key={i} color="red">{line}</Text>
               ))}
             </Box>
           )}
@@ -747,10 +742,10 @@ export const NewInstanceScreen: React.FC<NewInstanceScreenProps> = ({
             <Box borderStyle="round" borderColor="yellow" paddingX={2} marginTop={1} flexDirection="column">
               <Text color="yellow" bold>{'\u26a1 Missing DLLs detected'}</Text>
               <Text color="white">{'Press '}<Text color="green" bold>{'[G]'}</Text>{' to download a self-contained portable PostgreSQL right now.'}</Text>
-              <Text color="gray" dimColor>{'Or press any other key to go back to the Home screen.'}</Text>
+              <Text color={mutedColor}>{'Or press any other key to go back to the Home screen.'}</Text>
             </Box>
           ) : (
-            <Text color="gray" dimColor>{'Press any key to go back.'}</Text>
+            <Text color={mutedColor}>{'Press any key to go back.'}</Text>
           )}
         </Box>
       )}

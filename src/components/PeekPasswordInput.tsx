@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Text, useInput } from 'ink';
+import { mutedColor } from '../theme';
 
 interface PeekPasswordInputProps {
   value:       string;
@@ -59,7 +60,7 @@ export const PeekPasswordInput: React.FC<PeekPasswordInputProps> = ({
   });
 
   if (value.length === 0) {
-    return <Text color="gray" dimColor>{placeholder}</Text>;
+    return <Text color={mutedColor}>{placeholder}</Text>;
   }
 
   const display = value.split('').map((ch, i) => i === peekIdx ? ch : '*').join('') + '▋';

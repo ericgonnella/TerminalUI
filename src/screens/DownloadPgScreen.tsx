@@ -11,6 +11,7 @@ import {
   ProgressCallback,
 } from '../services/pgVersions';
 import type { Navigation } from '../hooks/useNavigation';
+import { mutedColor } from '../theme';
 
 interface Props {
   nav: Navigation;
@@ -49,9 +50,9 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
   const [selected, setSelected] = useState(0);
   const [phase,    setPhase]    = useState<Phase>('select');
   const [message,  setMessage]  = useState('');
+  const poppedRef = useRef(false);
   const [downloaded, setDownloaded] = useState(0);
   const [total,      setTotal]      = useState(0);
-  const poppedRef = useRef(false);
   const isLinux = process.platform === 'linux';
 
   // Slow-tick spinner (1s interval). ink-spinner updates every ~80ms which
@@ -170,9 +171,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       const hasKey = !!input || key.return || key.escape ||
         key.upArrow || key.downArrow || key.tab || key.backspace || key.delete;
       if (!hasKey) return;
-      if (poppedRef.current) return;
-      poppedRef.current = true;
-      nav.pop();
+      if (!poppedRef.current) { poppedRef.current = true; nav.pop(); }
       return;
     }
 
@@ -195,7 +194,10 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
     }
 
     // select phase
-    if (key.escape) { nav.pop(); return; }
+    if (key.escape) {
+      if (!poppedRef.current) { poppedRef.current = true; nav.pop(); }
+      return;
+    }
     if (key.upArrow)   setSelected(s => Math.max(0, s - 1));
     if (key.downArrow) setSelected(s => Math.min(PG_RELEASES.length - 1, s + 1));
 
@@ -224,7 +226,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       {/* Header */}
       <Box borderStyle="round" borderColor="cyan" paddingX={2} marginBottom={1}>
         <Text bold color="cyan">{'Manage PostgreSQL Versions'}</Text>
-        <Text color="gray" dimColor>{isLinux ? '  — installs via apt-get (PGDG)' : '  — portable installs in ~/.pgmanager/pg-versions/'}</Text>
+        <Text color={mutedColor}>{isLinux ? '  — installs via apt-get (PGDG)' : '  — portable installs in ~/.pgmanager/pg-versions/'}</Text>
       </Box>
 
       {/* Version list (shown during select phase) */}
@@ -244,7 +246,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
                 {inst ? (
                   <Text color="green" bold>{'✓ installed'}</Text>
                 ) : (
-                  <Text color="gray" dimColor>{'  not installed'}</Text>
+                  <Text color={mutedColor}>{'  not installed'}</Text>
                 )}
               </Box>
             );
@@ -258,13 +260,13 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
           <Text color="yellow" bold>{`${isLinux ? 'Install' : 'Download'} PostgreSQL ${selectedRelease.patch}?`}</Text>
           {isLinux ? (
             <>
-              <Text color="gray" dimColor>{'Installs via apt-get. Requires internet access and may prompt for sudo.'}</Text>
-              <Text color="gray" dimColor>{`Binaries will be placed at /usr/lib/postgresql/${selectedRelease.major}/bin/`}</Text>
+              <Text color={mutedColor}>{'Installs via apt-get. Requires internet access and may prompt for sudo.'}</Text>
+              <Text color={mutedColor}>{`Binaries will be placed at /usr/lib/postgresql/${selectedRelease.major}/bin/`}</Text>
             </>
           ) : (
             <>
-              <Text color="gray" dimColor>{'~50–80 MB portable ZIP will be saved to ~/.pgmanager/pg-versions/'}</Text>
-              <Text color="gray" dimColor>{'All required DLLs / libraries included — no system install needed.'}</Text>
+              <Text color={mutedColor}>{'~50–80 MB portable ZIP will be saved to ~/.pgmanager/pg-versions/'}</Text>
+              <Text color={mutedColor}>{'All required DLLs / libraries included — no system install needed.'}</Text>
             </>
           )}
           <Box marginTop={1}>
@@ -282,15 +284,15 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
         <Box borderStyle="round" borderColor="red" paddingX={2} marginBottom={1} flexDirection="column">
           <Text color="red" bold>{`Remove PostgreSQL ${selectedRelease.patch}?`}</Text>
           {isLinux ? (
-            <Text color="gray" dimColor>{`Run: sudo apt remove postgresql-${selectedRelease.major}`}</Text>
+            <Text color={mutedColor}>{`Run: sudo apt remove postgresql-${selectedRelease.major}`}</Text>
           ) : (
-            <Text color="gray" dimColor>{'This will delete ~/.pgmanager/pg-versions/' + selectedRelease.major + '/  (the binaries only, not your data).'}</Text>
+            <Text color={mutedColor}>{'This will delete ~/.pgmanager/pg-versions/' + selectedRelease.major + '/  (the binaries only, not your data).'}</Text>
           )}
           <Box marginTop={1}>
             <Text color="white">{'  Press '}</Text>
             <Text color="red" bold>{'Y / Enter'}</Text>
             <Text color="white">{' to remove,  '}</Text>
-            <Text color="gray">{'any other key'}</Text>
+            <Text color={mutedColor}>{'any other key'}</Text>
             <Text color="white">{' to cancel'}</Text>
           </Box>
         </Box>
@@ -309,7 +311,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
               <Text color="cyan">{`  ${pct}`}</Text>
             </Box>
           )}
-          <Text color="gray" dimColor>{message}</Text>
+          <Text color={mutedColor}>{message}</Text>
         </Box>
       )}
 
@@ -320,7 +322,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
             <Text color="cyan">{spinChar}</Text>
             <Text color="cyan" bold>{`  Extracting PostgreSQL ${selectedRelease.patch}`}</Text>
           </Box>
-          <Text color="gray" dimColor>{message}</Text>
+          <Text color={mutedColor}>{message}</Text>
         </Box>
       )}
 
@@ -331,7 +333,7 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
             <Text color="red">{spinChar}</Text>
             <Text color="red" bold>{`  Removing PostgreSQL ${selectedRelease.patch}`}</Text>
           </Box>
-          <Text color="gray" dimColor>{message}</Text>
+          <Text color={mutedColor}>{message}</Text>
         </Box>
       )}
 
@@ -339,9 +341,9 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
       {phase === 'done' && (
         <Box borderStyle="round" borderColor="green" paddingX={2} marginBottom={1} flexDirection="column">
           <Text color="green" bold>{`✓ PostgreSQL ${selectedRelease.patch} installed successfully!`}</Text>
-          <Text color="gray" dimColor>{message}</Text>
+          <Text color={mutedColor}>{message}</Text>
           <Box marginTop={1}>
-            <Text color="gray">{'You can now create a new instance using this version.  Press any key to go back.'}</Text>
+            <Text color={mutedColor}>{'You can now create a new instance using this version.  Press any key to go back.'}</Text>
           </Box>
         </Box>
       )}
@@ -364,12 +366,12 @@ export const DownloadPgScreen: React.FC<Props> = ({ nav, onInstalled }) => {
               <Text color="yellow">{logLine}</Text>
             ) : null}
             {bodyLines.map((line, i) => (
-              <Text key={i} color={/^(E:|Err:|dpkg: error|error processing)/i.test(line) ? 'red' : 'red'} dimColor={!/^(E:|Err:|dpkg: error|error processing)/i.test(line)}>
+              <Text key={i} color={/^(E:|Err:|dpkg: error|error processing)/i.test(line) ? 'red' : 'red'}>
                 {line}
               </Text>
             ))}
             <Box marginTop={1}>
-              <Text color="gray">{'Press any key to go back. Then: cat <log path above> for full output.'}</Text>
+              <Text color={mutedColor}>{'Press any key to go back. Then: cat <log path above> for full output.'}</Text>
             </Box>
           </Box>
         );
