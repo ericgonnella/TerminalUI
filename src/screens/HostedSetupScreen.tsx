@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState, useCallback } from 'react';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -128,11 +128,40 @@ export const HostedSetupScreen: React.FC<Props> = ({ nav, instances, instance: i
       setStep('running-script');
       return;
     }
+    // Pre-flight: verify we can run as root without a TTY password prompt.
+    // stdin is ignored when spawning, so interactive sudo blocks forever.
+    const isRoot = process.getuid?.() === 0;
+    if (!isRoot) {
+      let canSudo = false;
+      try { execSync('sudo -n true', { stdio: 'ignore', timeout: 3000 }); canSudo = true; }
+      catch { /* sudo requires a password */ }
+      if (!canSudo) {
+        setScriptLines([
+          'ERROR: pgmanager is not running as root and passwordless sudo is not configured.',
+          '',
+          'To use auto-run, either:',
+          '  \u2022 Run pgmanager as root:  sudo pgmanager',
+          '  \u2022 Add NOPASSWD in /etc/sudoers for your user',
+          '',
+          'Press [Esc] to go back and use the manual SSH one-liner instead.',
+        ]);
+        setScriptRunning(false);
+        setScriptExitCode(1);
+        setStep('running-script');
+        return;
+      }
+    }
     setScriptLines([]);
     setScriptRunning(true);
     setScriptExitCode(null);
     setStep('running-script');
     const proc = spawn('bash', [fpath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // Safety-net: kill if the process hangs beyond 3 minutes.
+    const killTimer = setTimeout(() => {
+      proc.kill('SIGTERM');
+      pushLine('[err] Timed out after 3 minutes — process killed. Check sudo/root access.');
+    }, 3 * 60 * 1000);
+    proc.on('close', () => clearTimeout(killTimer));
     let outBuf = '';
     let errBuf = '';
     const pushLine = (line: string) =>

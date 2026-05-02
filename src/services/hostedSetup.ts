@@ -168,9 +168,12 @@ export function buildSetupScript(opts: BuildScriptOpts): BuiltScript {
   const beginTag = `${HBA_TAG_PREFIX}-BEGIN ${tagId}`;
   const endTag   = `${HBA_TAG_PREFIX}-END ${tagId}`;
 
-  const hbaLines = cleanList
-    .map(v => `host    all    ${superuser === 'all' ? 'all' : superuser}    ${v}    ${auth}`)
-    .join('\\n');
+  // Each CIDR must be on its own line in pg_hba.conf.  Joining with '\n' then
+  // using printf '%s' would embed a literal backslash-n rather than a real newline,
+  // producing one invalid line.  Generate a separate printf call per entry instead.
+  const hbaLinesBash = cleanList
+    .map(v => `  printf 'host    all    ${superuser === 'all' ? 'all' : superuser}    ${v}    ${auth}\\n'`)
+    .join('\n');
 
   // NB: every interpolated value is a literal we control or has been
   // strictly validated, so single-quoting is sufficient.
@@ -186,8 +189,17 @@ AUTH=${shQuote(auth)}
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "==> Re-executing under sudo so we can edit /etc/postgresql and reload the service"
-  exec sudo -E bash "$0" "$@"
+  # Re-exec only works when $0 is an actual script file (local run via pgmanager).
+  # The SSH one-liner uses 'sudo bash -s' so it already arrives here as root.
+  if [ -f "$0" ]; then
+    exec sudo -E bash "$0" "$@"
+  fi
+  echo "ERROR: not running as root — use the SSH one-liner (sudo bash -s) or run pgmanager as root." >&2
+  exit 1
 fi
+
+VER=""
+CLU=""
 
 echo "==> Detecting PostgreSQL config locations"
 PGCONF="$(sudo -u postgres psql -tAc 'SHOW config_file;' 2>/dev/null || true)"
@@ -237,7 +249,7 @@ awk -v B="${beginTag}" -v E="${endTag}" '
 {
   cat "$TMP_HBA"
   printf '\\n%s\\n' "${beginTag}"
-  printf '%s\\n' "${hbaLines}"
+${hbaLinesBash}
   printf '%s\\n' "${endTag}"
 } > "$PGHBA"
 rm -f "$TMP_HBA"
@@ -249,14 +261,24 @@ elif command -v iptables     >/dev/null 2>&1; then iptables -C INPUT -p tcp --dp
 else echo "    (no supported firewall found — skipping)"; fi
 
 echo "==> 4/4 Reload PostgreSQL"
-if [ "$LISTEN_NEEDS_RESTART" -eq 1 ]; then
-  if   command -v systemctl >/dev/null 2>&1; then systemctl restart postgresql || systemctl restart "postgresql@*-main" || true
-  elif command -v service   >/dev/null 2>&1; then service postgresql restart   || true
+# Discover the actual service name — systemctl does not expand globs, so
+# 'postgresql@*-main' would silently fail on versioned Debian/Ubuntu installs.
+_pg_svc_action() {
+  local ACT="$1"
+  if command -v pg_ctlcluster >/dev/null 2>&1 && [ -n "$VER" ] && [ -n "$CLU" ]; then
+    pg_ctlcluster "$VER" "$CLU" "$ACT" || true
+  elif command -v systemctl >/dev/null 2>&1; then
+    SVC="$(systemctl list-units --type=service --all --no-legend 2>/dev/null | awk '/postgresql/{gsub(/\\.service$/,"",$1); print $1; exit}')"
+    [ -z "$SVC" ] && SVC="postgresql"
+    systemctl "$ACT" "$SVC" || true
+  elif command -v service >/dev/null 2>&1; then
+    service postgresql "$ACT" || true
+  else
+    echo "    WARNING: no service manager found — restart PostgreSQL manually." >&2
   fi
-else
-  if   command -v systemctl >/dev/null 2>&1; then systemctl reload postgresql || systemctl reload  "postgresql@*-main" || true
-  elif command -v service   >/dev/null 2>&1; then service postgresql reload   || true
-  fi
+}
+if [ "$LISTEN_NEEDS_RESTART" -eq 1 ]; then _pg_svc_action restart
+else _pg_svc_action reload
 fi
 
 echo
@@ -271,7 +293,9 @@ echo "OK — pgmanager hosted setup complete. Try connecting from your client no
     // We deliberately don't escape inside the heredoc — the heredoc terminator
     // PGMSETUP is quoted ('PGMSETUP') so the shell does NO substitution, which
     // means the script body travels literally to the remote bash.
-    return `ssh ${sshTarget} 'bash -s' <<'PGMSETUP'\n${script}PGMSETUP\n`;
+    // 'sudo bash -s' ensures the script runs as root from the start, avoiding
+    // the $0-is-not-a-file re-exec problem that occurs with plain 'bash -s'.
+    return `ssh ${sshTarget} 'sudo bash -s' <<'PGMSETUP'\n${script}PGMSETUP\n`;
   };
 
   return { script, oneLiner, allowList: cleanList };
@@ -349,7 +373,11 @@ HOSTNAME=${shQuote(hostname)}
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "==> Re-executing under sudo so we can install cloudflared and a systemd service"
-  exec sudo -E bash "$0" "$@"
+  if [ -f "$0" ]; then
+    exec sudo -E bash "$0" "$@"
+  fi
+  echo "ERROR: not running as root — use the SSH one-liner (sudo bash -s) or run as root." >&2
+  exit 1
 fi
 
 # 1. Install cloudflared if missing.
